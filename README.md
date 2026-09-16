@@ -62,7 +62,6 @@ Uninstall = disable or delete the extension; no data outside the extension store
 | Persist the token cache | on | Counts are cached per model + content, so returning to a preset (or restarting) is instant. |
 | Recount delay (ms) | 100 | Quiet time after the last panel interaction before a recount may start. A preset switch is treated as a completed action: it only waits a short settle window (120 ms), so its numbers refresh right away. |
 | Token cache entries | 4000 | LRU bound. |
-| Let the perf HUD ignore touches | on | The host HUD is a fixed overlay; with this on only its drag header accepts input, so the area it covers stays usable. |
 
 Buttons: **Clear token cache**. The status line below keeps reporting the cache, the last panel sync,
 whether a token recount is still pending, and the measured phases of the last preset switch:
@@ -218,5 +217,5 @@ token api，以及从切换完成到数字变精确的 numbers。切换预设本
 最多只给浏览器 150ms 找空闲，所以它不会一直排在重绘后面；普通编辑仍按原来的空闲超时处理。
 
 **注意**：token 数字在交互后会滞后一个空闲窗口才刷新（默认保留上次数字并灰显）；上游若大改
-PromptManager 结构，插件会自动降级为原生渲染并在状态区标注，不会把面板画坏。设置区只保留
-「Clear token cache」和状态行，压测/报告/HUD 开关以及「详细诊断日志」勾选框都已移除。
+PromptManager 结构，插件会自动降级为原生渲染并在状态区标注，不会把面板画坏。压测、报告、HUD
+相关的按钮/开关以及「详细诊断日志」勾选框都已移除。

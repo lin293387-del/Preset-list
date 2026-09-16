@@ -13,7 +13,6 @@ const NOTICE_MS = 4000;
 
 const CONTROLS = Object.freeze({
     enabled: 'preset_lite_enabled',
-    hudPassthrough: 'preset_lite_hud_passthrough',
     keepStaleNumbers: 'preset_lite_keep_stale',
     coalescePresetEvents: 'preset_lite_coalesce',
     reportPresetConflicts: 'preset_lite_report_conflicts',

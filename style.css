@@ -6,20 +6,6 @@
  * without a reload.
  */
 
-/*
- * The host HUD is `position: fixed` with an inline `pointer-events: auto` and a
- * maximal z-index, so it used to swallow every touch in the rectangle it covers.
- * The panel stays readable, but only its drag header accepts input; the rest of
- * the area is transparent to touches again.
- */
-body.tt-pl-hud-passthrough #tauritavern-perf-hud {
-    pointer-events: none !important;
-}
-
-body.tt-pl-hud-passthrough #tauritavern-perf-hud > div:first-child {
-    pointer-events: auto !important;
-}
-
 /* Keep this settings block inside the viewport on narrow screens. */
 body.tt-pl-on .preset-lite-settings,
 body.tt-pl-on .preset-lite-settings .inline-drawer-content {

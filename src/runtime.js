@@ -511,19 +511,8 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
         }
     }
 
-    /**
-     * The host HUD is a fixed overlay with `pointer-events: auto`, so it swallows
-     * touches in the area it covers. The class below lets `style.css` make the
-     * panel click-through while keeping its drag header usable.
-     */
-    function syncHudPassthrough() {
-        const config = settings.get();
-        document.body?.classList.toggle('tt-pl-hud-passthrough', Boolean(config.enabled && config.hudPassthrough));
-    }
-
     const unsubscribeSettings = settings.subscribe(() => {
         document.body?.classList.toggle('tt-pl-on', settings.get().enabled);
-        syncHudPassthrough();
         if (!settings.get().enabled) {
             presetWindow.flushNow('disabled');
             // Write the real numbers back before upstream takes over again.
@@ -554,7 +543,6 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
             }
             patch.patchExistingInstance();
             document.body?.classList.toggle('tt-pl-on', settings.get().enabled);
-            syncHudPassthrough();
 
             if (jQuery?.fn?.trigger) {
                 presetWindow.install(jQuery);
@@ -580,7 +568,6 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
             presetWindow.uninstall();
             patch.uninstall();
             document.body?.classList.remove('tt-pl-dragging');
-            document.body?.classList.remove('tt-pl-hud-passthrough');
             document.body?.classList.remove('tt-pl-on');
             hooks.onStop?.();
             diagnostics.info('Preset Lite stopped');
