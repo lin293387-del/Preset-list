@@ -38,6 +38,12 @@ export function createBrowserScheduler() {
 }
 
 const RETRY_INTERVAL_MS = 250;
+/**
+ * A recount parked behind a running generation is retried at this interval, so a
+ * generation that never reports its end (aborted, interrupted, host quirk) can
+ * only delay the numbers instead of freezing them at "-".
+ */
+const BUSY_RECHECK_MS = 2000;
 
 /**
  * @typedef {object} SchedulerSettings
@@ -124,7 +130,7 @@ export function createRecountScheduler({
         pending = null;
     }
 
-    function armRetry() {
+    function armRetry(delayMs = RETRY_INTERVAL_MS) {
         if (pending || !state.dirty || state.running) {
             return;
         }
@@ -133,7 +139,7 @@ export function createRecountScheduler({
             handle: scheduler.setTimer(() => {
                 pending = null;
                 arm();
-            }, RETRY_INTERVAL_MS),
+            }, delayMs),
         };
     }
 
@@ -143,8 +149,10 @@ export function createRecountScheduler({
         }
         if (!canStart()) {
             // A hidden panel must not spin: it is re-armed on visibility changes.
-            if (isVisible() && !isBusy()) {
-                armRetry();
+            if (isVisible()) {
+                // Event-driven wake-ups normally end a park; the timer is the
+                // safety net for the ones that never arrive.
+                armRetry(isBusy() ? BUSY_RECHECK_MS : RETRY_INTERVAL_MS);
             }
             return;
         }
@@ -160,7 +168,7 @@ export function createRecountScheduler({
 
     /**
      * @param {string} reason
-     * @returns {Promise<void> | null}
+     * @returns {Promise<void> | null} Null when the recount stayed parked.
      */
     function run(reason) {
         if (currentRun) {
@@ -183,29 +191,37 @@ export function createRecountScheduler({
         const endSpan = metrics?.startSpan('recount') ?? null;
 
         state.running = true;
+        /** @type {unknown} */
+        let failure = null;
         const promise = (async () => {
             try {
                 await instance.tryGenerate();
-                if (epoch === state.epoch) {
-                    state.lastRun = scheduler.now();
-                    onNumbersFresh?.();
-                    diagnostics.info(`Recount finished (${reason})`);
-                }
             } catch (error) {
-                if (epoch === state.epoch) {
-                    diagnostics.warn('Recount failed:', error);
-                    onRecountError?.(error);
-                }
+                failure = error;
             }
         })();
 
         currentRun = promise;
-        void promise.finally(() => {
+        void promise.then(() => {
             endSpan?.();
             if (currentRun === promise) {
                 currentRun = null;
             }
+            // The panel sync below asks whether a recount is pending; it must see
+            // this run as finished, otherwise the exact numbers it has just been
+            // given are painted as "still recalculating" (or as "-") and nothing
+            // re-renders the panel once the flag finally clears.
             state.running = false;
+            if (epoch === state.epoch) {
+                if (failure) {
+                    diagnostics.warn('Recount failed:', failure);
+                    onRecountError?.(failure);
+                } else {
+                    state.lastRun = scheduler.now();
+                    diagnostics.info(`Recount finished (${reason})`);
+                    onNumbersFresh?.();
+                }
+            }
             if (state.dirty) {
                 arm();
             }

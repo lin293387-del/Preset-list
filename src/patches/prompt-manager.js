@@ -5,8 +5,8 @@
  * Nothing in the application source is modified: the upstream class and the
  * upstream instance are re-pointed at this extension while it is enabled, and
  * every wrapper delegates to the captured original when it is not. That keeps a
- * single switch able to restore byte-for-byte upstream behaviour (used by the
- * built-in A/B benchmark and as an escape hatch for users).
+ * single switch able to restore byte-for-byte upstream behaviour without a
+ * reload.
  *
  * The upstream class and instance are injected so this layer can be unit tested
  * without the application module graph.
@@ -33,7 +33,15 @@ const TAKEOVER_METHODS = Object.freeze([
  * @returns {boolean} True when the instance drives the visible panel.
  */
 export function isTargetInstance(instance) {
-    return instance?.configuration?.containerIdentifier === TARGET_CONTAINER_ID;
+    if (instance?.configuration?.containerIdentifier !== TARGET_CONTAINER_ID) {
+        return false;
+    }
+    // An isolated prompt-assembly manager (Agent Mode and other headless
+    // assemblies) copies the panel configuration but never touches the DOM; its
+    // hook for macro substitution is what tells the two apart. Letting it through
+    // marked the visible panel "fresh" after an assembly it never saw, which
+    // cancelled the pending recount and left its token numbers stale.
+    return typeof instance.substituteParams !== 'function';
 }
 
 /**

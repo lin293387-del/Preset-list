@@ -67,7 +67,7 @@ function createHarness(overrides = {}) {
         ...overrides.settings,
     };
     const scheduler = createFakeScheduler();
-    const calls = { runs: 0, fresh: 0, errors: 0, visible: true, busy: false, held: false };
+    const calls = { runs: 0, fresh: 0, errors: 0, visible: true, busy: false, held: false, pendingWhenFresh: [] };
 
     /** Optional gate so a test can decide when a dry run finishes. */
     let releaseRun = null;
@@ -85,6 +85,9 @@ function createHarness(overrides = {}) {
         },
     };
 
+    /** @type {any} */
+    let apiRef = null;
+
     const schedulerApi = createRecountScheduler({
         settings: { get: () => config },
         diagnostics: { info() {}, warn() {}, noteOnce() {} },
@@ -92,10 +95,14 @@ function createHarness(overrides = {}) {
         isVisible: () => calls.visible,
         isBusy: () => calls.busy,
         isInteractionHeld: () => calls.held,
-        onNumbersFresh: () => { calls.fresh += 1; },
+        onNumbersFresh: () => {
+            calls.fresh += 1;
+            calls.pendingWhenFresh.push(apiRef?.isPending() ?? null);
+        },
         onRecountError: () => { calls.errors += 1; },
         scheduler,
     });
+    apiRef = schedulerApi;
 
     return {
         scheduler,
@@ -120,6 +127,19 @@ test('a scheduled recount runs while idle', async () => {
 
     assert.equal(calls.runs, 1);
     assert.equal(calls.fresh, 1);
+    assert.equal(api.isPending(), false);
+});
+
+test('fresh numbers are reported after the recount has finished', async () => {
+    const { scheduler, api, calls } = createHarness();
+
+    api.schedule('test');
+    await scheduler.advance(10);
+
+    // The panel sync that follows reads the scheduler state to decide between real
+    // numbers and the "still recalculating" presentation, so the callback must not
+    // observe this run as pending.
+    assert.deepEqual(calls.pendingWhenFresh, [false]);
     assert.equal(api.isPending(), false);
 });
 

@@ -59,7 +59,6 @@ export async function init() {
         await panel.mount();
 
         const activeRuntime = runtime;
-        const activePanel = panel;
 
         globalThis.__PRESET_LITE__ = {
             version: VERSION,
@@ -71,10 +70,8 @@ export async function init() {
                 activeRuntime.setEnabled(value);
             },
             snapshot: () => activeRuntime.snapshot(),
-            report: () => activePanel.getLastReport(),
             clearCache: () => activeRuntime.clearCache(),
             recountNow: reason => activeRuntime.recountNow(String(reason ?? 'manual')),
-            bench: options => activeRuntime.bench.run(options ?? {}),
             stop: () => activeRuntime.stop(),
         };
 

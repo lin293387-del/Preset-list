@@ -8,9 +8,7 @@ Nothing inside the application source is modified. Every patched path delegates 
 moment the extension is switched off, so the panel can always be returned to stock behaviour without
 a reload.
 
-> Status: implemented and covered by unit + DOM integration tests. Device-side numbers (FPS, long
-> tasks) are measured by the built-in benchmark — run it once on your own device, see
-> [Benchmark](#benchmark).
+> Status: implemented and covered by unit + DOM integration tests.
 
 ---
 
@@ -67,67 +65,17 @@ Uninstall = disable or delete the extension; no data outside the extension store
 | Verbose diagnostics | off | Console logging plus the diagnostics list. |
 | Let the perf HUD ignore touches | on | The host HUD is a fixed overlay; with this on only its drag header accepts input, so the area it covers stays usable. |
 
-Buttons: **Run benchmark**, **Clear token cache**, **Copy report**, **Enable/Disable perf HUD**
-(toggles the host flag `tt:perf`; the HUD appears or disappears after a restart, `Ctrl+Alt+P` toggles
-it live). Benchmark progress is appended to a timestamped log that the periodic status line cannot
-overwrite, and mirrored to the DevTools console.
+Buttons: **Clear token cache**. The status line below keeps reporting the cache, the last panel sync
+and whether a token recount is still pending.
 
 Runtime API for the console:
 
 ```js
-__PRESET_LITE__.snapshot()      // scheduler, cache, panel sync stats, diagnostics, host HUD (if on)
-__PRESET_LITE__.report()        // last benchmark report
-__PRESET_LITE__.enable(false)   // A/B without touching settings
+__PRESET_LITE__.snapshot()      // scheduler, cache, panel sync stats, diagnostics
+__PRESET_LITE__.enable(false)   // compare against stock behaviour without touching settings
 __PRESET_LITE__.recountNow()    // force an exact recount
-__PRESET_LITE__.bench({ mode: 'ab' })
+__PRESET_LITE__.clearCache()    // drop every cached token count
 ```
-
----
-
-## Benchmark
-
-The benchmark drives the real UI: 60 prompt toggles, preset switches, and a 2 s scroll, first with
-the extension disabled (**baseline** = upstream) and then enabled (**optimized**), on the same chat,
-preset and device. Each phase records frame deltas, long tasks and event-loop lag; the settle phases
-show whether a recount ran.
-
-1. Import `tools/bench-stress-60.preset.json` (60 extra prompts) and select it, or use your own
-   prompt-heavy preset.
-2. Open the **AI Response Configuration** panel (the benchmark refuses to run while it is closed).
-3. Run the benchmark and keep your hands off the device.
-4. Copy the report.
-
-### What a run looks like
-
-The benchmark drives the real UI, so it *is* visible — keep the AI Response Configuration panel in
-view:
-
-| When | On screen |
-| --- | --- |
-| immediately | the settings block logs `benchmark started` plus a `sample:` line saying how many toggleable rows, presets and scrollable pixels were found; the run button locks |
-| ~0-10 s | prompt rows flip on and off, 60 times (~120 ms apart) — this is the **baseline** pass, so it deliberately feels like stock |
-| ~10-13 s | quiet settle window (this is where upstream runs its dry run) |
-| ~13-22 s | the preset dropdown switches ~6 times |
-| ~22-25 s | second quiet settle |
-| ~25-27 s | the left panel scrolls up and down for 2 s |
-| then again | the same sequence with Preset Lite **enabled** |
-| end | `benchmark finished (n phases)` and the report table below |
-
-Progress lines are appended with a timestamp and are never overwritten by the periodic status line;
-the same messages are mirrored to the DevTools console. If a phase has nothing to exercise (no
-toggleable rows, fewer than two presets, panel not scrollable) the `sample:` line says so instead of
-the run quietly doing nothing. A full A/B run takes about a minute.
-
-Targets used for acceptance:
-
-| Phase | Target |
-| --- | --- |
-| 60 toggles (~120 ms apart) | 0 long tasks > 50 ms, frame p95 ≤ 16.7 ms |
-| 6 preset switches (~1.5 s apart) | per-switch plugin-attributable work ≤ 50 ms, frame p95 ≤ 16.7 ms |
-| 2 s scroll | frame p95 ≤ 16.7 ms, 0 long tasks > 50 ms |
-| Recount | only after interactions stop; never slower than baseline; faster on repeat thanks to the cache |
-
-Regenerate the sample preset with `node tools/build-stress-preset.mjs`.
 
 ---
 
@@ -152,7 +100,10 @@ changed, and the extension falls back to stock rendering (listed as `degraded` i
 instead of dropping rows.
 
 Recounts are single-flight and only start when the panel is visible, no generation is running, and
-the user has stopped interacting/scrolling/dragging. Stale results are discarded by epoch.
+the user has stopped interacting/scrolling/dragging. Stale results are discarded by epoch. A
+prompt-assembly preview (the dry run that produces the numbers) is *not* a running generation: the
+host reports its start but never its end, so it must not park the scheduler — otherwise the first
+recount would also be the last one, and prompts that were not counted yet would keep showing `-`.
 
 ---
 
@@ -168,7 +119,8 @@ the user has stopped interacting/scrolling/dragging. Stale results are discarded
   field values (upstream lets them observe partially applied ones). Fields a handler changes
   afterwards are reported; turn the option off if a third-party extension depends on that ordering.
 - **Token numbers may lag** behind an interaction by one idle window. They are always exact once the
-  recount finishes; the dry run itself is unchanged.
+  recount finishes; the dry run itself is unchanged. A number is only ever `-` when the last
+  assembly did not produce a count for that prompt (a disabled or empty prompt), exactly like stock.
 
 ---
 
@@ -176,7 +128,7 @@ the user has stopped interacting/scrolling/dragging. Stale results are discarded
 
 ```
 npm install          # devDependencies: typescript, happy-dom
-npm test             # 72 tests: pure logic, panel DOM reconciliation, patch layer, runtime smoke
+npm test             # 81 tests: pure logic, panel DOM reconciliation, patch layer, runtime smoke
 npm run typecheck    # tsc --noEmit with checkJs (JSDoc types, no build step)
 ```
 
@@ -202,12 +154,10 @@ src/render/apply.js     DOM executor for a plan
 src/render/panel.js     structure/rows/total/stale-marker rendering
 src/tokens/scheduler.js recount state machine (unit tested)
 src/tokens/cache.js     memoized token counts, persistent LRU (unit tested)
-src/perf/metrics.js     frame/long-task/lag sampling
-src/perf/bench.js       A/B benchmark
-src/ui/settings-panel.js settings drawer wiring
+src/perf/metrics.js     timing spans for panel syncs and recounts
+src/ui/settings-panel.js settings drawer wiring and status line
 tests/                  unit, DOM reconciliation, patch-layer and runtime smoke tests
 tests/fixtures/         upstream markup copies, module doubles, Node resolve hook
-tools/                  benchmark sample preset generator
 ```
 
 There is no build step: the repo is exactly what gets installed, and `package.json` only exists for
@@ -236,8 +186,9 @@ MIT — see [LICENSE](LICENSE).
 **装**：在扩展安装器里填 `https://github.com/lin293387-del/Preset-list`，或把整个文件夹放进
 `<数据目录>/default-user/extensions/Preset-list/`，然后在扩展列表里启用。
 
-**验证**：导入 `tools/bench-stress-60.preset.json`，打开左栏面板，点设置里的
-「Run benchmark」（会先跑一遍原生再跑一遍插件并给出对照），完成后「Copy report」把结果发我。
+**验证**：打开左栏「AI 响应配置」面板，交互结束后 token 数字应在一个空闲窗口内刷新成真实值；
+只有真正没有 token（被禁用/内容为空）的提示词才显示 `-`。
 
 **注意**：token 数字在交互后会滞后一个空闲窗口才刷新（默认保留上次数字并灰显）；上游若大改
-PromptManager 结构，插件会自动降级为原生渲染并在状态区标注，不会把面板画坏。
+PromptManager 结构，插件会自动降级为原生渲染并在状态区标注，不会把面板画坏。设置区只保留
+「Clear token cache」和状态行，压测/报告/HUD 开关三个按钮已经移除。

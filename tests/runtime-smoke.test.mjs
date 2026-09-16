@@ -290,6 +290,78 @@ describe('runtime smoke test', { skip: Window ? false : 'happy-dom is not instal
         }
     });
 
+    test('a prompt-assembly dry run does not park later recounts', async () => {
+        const { runtime, instance, app } = await bootRuntime();
+
+        try {
+            // The host announces a prompt-assembly preview exactly like a real
+            // generation start, but never reports its end: upstream returns from the
+            // dry run before the closing event is emitted.
+            instance.tryGenerate = async () => {
+                instance.tryGenerateCalls = (instance.tryGenerateCalls ?? 0) + 1;
+                await app.eventSource.emit(app.eventTypes.GENERATION_STARTED, 'normal', {}, true);
+                instance.setChatCompletion({ getMessages: () => ({}) });
+            };
+
+            instance.render(true);
+            await waitFor(() => (instance.tryGenerateCalls ?? 0) === 1);
+            await waitFor(() => document.querySelector('li[data-pm-identifier="userOne"]'));
+
+            // A change after the preview must still be able to refresh the numbers.
+            instance.tokenHandler.counts.userOne = 777;
+            instance.renderNowAndRefresh();
+
+            await waitFor(
+                () => document.querySelector('li[data-pm-identifier="userOne"] .prompt_manager_prompt_tokens')
+                    ?.getAttribute('data-pm-tokens') === '777',
+                { timeoutMs: 4000 },
+            );
+            assert.equal(instance.tryGenerateCalls, 2, 'the second recount ran');
+        } finally {
+            runtime.stop();
+        }
+    });
+
+    test('a finished recount paints the numbers instead of leaving the panel pending', async () => {
+        const { runtime, instance, settings } = await bootRuntime();
+
+        try {
+            // Stock behaviour: while the numbers are being recalculated the panel
+            // shows "-"; it must leave that state as soon as the recount is done.
+            settings.update({ keepStaleNumbers: false });
+            instance.tokenUsage = 555;
+
+            instance.render(true);
+            await waitFor(() => (instance.tryGenerateCalls ?? 0) === 1);
+            await waitFor(
+                () => document.querySelector('li[data-pm-identifier="main"] .prompt_manager_prompt_tokens')
+                    ?.getAttribute('data-pm-tokens') === '12',
+                { timeoutMs: 4000 },
+            );
+
+            const header = document.querySelector('.completion_prompt_manager_header');
+            assert.match(header.textContent, /555/, 'the total shows the assembly total, not "-"');
+            assert.ok(runtime.snapshot().scheduler.dirty === false, 'no recount is left pending');
+        } finally {
+            runtime.stop();
+        }
+    });
+
+    test('an isolated prompt-assembly manager is left alone', async () => {
+        const { runtime, PromptManager } = await bootRuntime();
+
+        try {
+            const headless = new PromptManager();
+            headless.substituteParams = content => content;
+
+            headless.render(true);
+
+            assert.equal(headless.renderCalls ?? 0, 1, 'the isolated manager keeps upstream rendering');
+        } finally {
+            runtime.stop();
+        }
+    });
+
     test('toggling a prompt keeps the last number and schedules one recount', async () => {
         const { runtime, instance } = await bootRuntime();
 
@@ -353,73 +425,6 @@ describe('runtime smoke test', { skip: Window ? false : 'happy-dom is not instal
 
             assert.equal(instance.renderCalls ?? 0, 1, 'upstream render runs while disabled');
             assert.equal(instance.renderNowAndRefreshCalls ?? 0, 1, 'upstream refresh runs while disabled');
-        } finally {
-            runtime.stop();
-        }
-    });
-
-    test('the benchmark drives the panel, reports progress and restores state', async () => {
-        const { runtime, instance } = await bootRuntime();
-
-        try {
-            instance.render(true);
-            await waitFor(() => document.querySelectorAll('li[data-pm-identifier]').length === 3);
-
-            const messages = [];
-            const report = await runtime.bench.run({
-                mode: 'optimized',
-                toggles: 3,
-                toggleIntervalMs: 5,
-                presets: 1,
-                presetIntervalMs: 5,
-                scrollMs: 50,
-                settleMs: 30,
-                onProgress: ({ message }) => messages.push(message),
-            });
-
-            assert.ok(messages.some(message => message.startsWith('sample:')), 'a preflight sample summary is reported');
-            assert.ok(messages.some(message => message.includes('=== OPTIMIZED run ===')));
-            assert.ok(messages.some(message => message.includes('phase 1: toggles')), 'phase progress is reported');
-            assert.ok(messages.some(message => message.includes('restored prompt states')), 'restoration is reported');
-
-            assert.ok(report.phases.length >= 3, 'the report contains the phases');
-            assert.equal(runtime.bench.isRunning(), false);
-            assert.equal(instance.handleToggleCalls, 3, 'three prompt toggles were performed');
-
-            const order = instance.serviceSettings.prompt_order[0].order;
-            assert.ok(order.every(entry => entry.enabled === true), 'toggled prompts are restored');
-        } finally {
-            runtime.stop();
-        }
-    });
-
-    test('a benchmark that has nothing to exercise says so instead of failing', async () => {
-        const { runtime, instance } = await bootRuntime();
-
-        try {
-            // An empty prompt set (not a hand-cleared DOM: the panel would rebuild it).
-            instance.serviceSettings.prompts = [];
-            instance.serviceSettings.prompt_order[0].order = [];
-            instance.renderNowAndRefresh();
-            await waitFor(() => document.querySelectorAll('#completion_prompt_manager_list li[data-pm-identifier]').length === 0);
-
-            const messages = [];
-            const report = await runtime.bench.run({
-                mode: 'optimized',
-                toggles: 2,
-                toggleIntervalMs: 5,
-                presets: 2,
-                presetIntervalMs: 5,
-                scrollMs: 20,
-                settleMs: 20,
-                onProgress: ({ message }) => messages.push(message),
-            });
-
-            assert.ok(messages.some(message => message.includes('no toggleable prompt rows')));
-            assert.ok(messages.some(message => message.includes('fewer than two presets')));
-            const toggles = report.phases.find(phase => phase.name === 'toggles');
-            assert.equal(toggles.details.toggles, 0);
-            assert.equal(instance.handleToggleCalls ?? 0, 0);
         } finally {
             runtime.stop();
         }

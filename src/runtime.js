@@ -15,7 +15,6 @@ import { getContext } from './host.js';
 import { createPresetWindowCoalescer } from './patches/preset-window.js';
 import { createPromptManagerPatch } from './patches/prompt-manager.js';
 import { createPanelState, fullRebuild, syncPanel } from './render/panel.js';
-import { createBench } from './perf/bench.js';
 import { createMetrics } from './perf/metrics.js';
 import { createTokenCountCache } from './tokens/cache.js';
 import { createBrowserScheduler, createRecountScheduler } from './tokens/scheduler.js';
@@ -371,31 +370,6 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
         },
     });
 
-    // ----------------------------------------------------------------- benchmark
-
-    const bench = createBench({
-        settings,
-        metrics,
-        diagnostics,
-        getJQuery: () => jQuery,
-        runtime: {
-            getInstance: () => patch.getInstance(),
-            getChatLength() {
-                const chat = getContext().chat;
-                return Array.isArray(chat) ? chat.length : null;
-            },
-            cacheStats: () => ({ ...cache.stats, size: cache.size(), backend: cache.backend() }),
-            schedulerSnapshot: () => scheduler.snapshot(),
-            requestPanelSync,
-            scheduleRecount: reason => scheduler.schedule(reason),
-            assertIdleForBench() {
-                if (busy) {
-                    throw new Error('Wait for the current generation to finish before running the benchmark');
-                }
-            },
-        },
-    });
-
     // ------------------------------------------------------------------- lifecycle
 
     function installListeners() {
@@ -416,7 +390,17 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
         }
 
         const generationEvents = [
-            [eventTypes.GENERATION_STARTED, () => { busy = true; }],
+            // A prompt-assembly preview (the "dry run" that produces the token
+            // numbers) emits GENERATION_STARTED with `dryRun === true` and returns
+            // before the event that normally closes a generation is emitted.
+            // Treating it as a running generation used to latch this flag, which
+            // parked every later recount and left the panel on stale or "-" numbers.
+            [eventTypes.GENERATION_STARTED, (_type, _options, isDryRun) => {
+                if (isDryRun) {
+                    return;
+                }
+                busy = true;
+            }],
             [eventTypes.GENERATION_STOPPED, () => { busy = false; scheduler.wake('generation stopped'); }],
             [eventTypes.GENERATION_ENDED, () => { busy = false; scheduler.wake('generation ended'); }],
             [eventTypes.OAI_PRESET_CHANGED_BEFORE, () => presetWindow.open()],
@@ -506,7 +490,6 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
         diagnostics,
         metrics,
         cache,
-        bench,
         identity,
         panelState,
         scheduler,
