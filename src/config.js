@@ -17,7 +17,6 @@ export const SETTINGS_NAMESPACE = 'preset-lite';
  * @property {boolean} reportPresetConflicts Report preset fields a replayed handler changed afterwards.
  * @property {boolean} persistentTokenCache Persist token counts across sessions.
  * @property {number} tokenCacheLimit LRU bound for the persistent token cache.
- * @property {boolean} diagnostics Verbose logging plus the diagnostics report.
  * @property {boolean} hudPassthrough Let the host performance HUD ignore touches outside its header.
  */
 
@@ -41,8 +40,6 @@ export const DEFAULT_SETTINGS = Object.freeze({
     persistentTokenCache: true,
     /** LRU bound for the persistent token cache. */
     tokenCacheLimit: 4000,
-    /** Verbose logging plus the diagnostics panel. */
-    diagnostics: false,
     /** Let the host performance HUD ignore touches outside its drag header. */
     hudPassthrough: true,
 });
@@ -60,7 +57,6 @@ const BOOLEAN_KEYS = Object.freeze([
     'coalescePresetEvents',
     'reportPresetConflicts',
     'persistentTokenCache',
-    'diagnostics',
     'hudPassthrough',
 ]);
 

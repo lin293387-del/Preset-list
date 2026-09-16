@@ -41,6 +41,15 @@ export function createMetrics({ labelLimit = 32 } = {}) {
 
     return {
         /**
+         * Records a span that was measured elsewhere (upstream loop, backend call).
+         *
+         * @param {string} label
+         * @param {number} durationMs
+         */
+        record(label, durationMs) {
+            recordSpan(label, durationMs);
+        },
+        /**
          * @param {string} label
          * @returns {() => number} Ends the span and returns its duration.
          */

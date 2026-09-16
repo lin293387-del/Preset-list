@@ -200,9 +200,9 @@ describe('runtime smoke test', { skip: Window ? false : 'happy-dom is not instal
         const { PromptManager } = await import('/scripts/PromptManager.js');
 
         const settings = createSettings(app.context);
-        settings.update({ enabled, idleDelayMs: 0, diagnostics: false });
+        settings.update({ enabled, idleDelayMs: 0 });
 
-        const diagnostics = createDiagnostics({ isVerbose: () => false });
+        const diagnostics = createDiagnostics();
         const runtime = createRuntime({
             context: app.context,
             settings,

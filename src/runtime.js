@@ -47,6 +47,7 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
         diagnostics,
         namespace: 'preset-lite',
         resolveModel: getTokenizerModel,
+        metrics,
     });
 
     const eventSource = context.eventSource;
@@ -60,10 +61,29 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
     let sorting = false;
     let busy = false;
     let observedVisible = true;
+    /** When the last preset apply loop finished, epoch milliseconds. */
+    let lastPresetAppliedAt = null;
+    /** True while the numbers of that switch are still waiting for a fresh assembly. */
+    let freshAfterSwitchPending = false;
     /** @type {IntersectionObserver | null} */
     let visibilityObserver = null;
     /** @type {Array<() => void>} */
     const disposers = [];
+
+    /**
+     * Records how long a preset switch needed to show exact numbers again.
+     *
+     * Only the first fresh assembly after the switch counts: the ones that follow
+     * belong to the user's next edit. This number is what tells a slow backend
+     * apart from a slow assembly, so it must not be diluted by later recounts.
+     */
+    function noteNumbersFreshForSwitch() {
+        if (!freshAfterSwitchPending || lastPresetAppliedAt === null) {
+            return;
+        }
+        freshAfterSwitchPending = false;
+        metrics.record('numbersAfterSwitch', Date.now() - lastPresetAppliedAt);
+    }
 
     // ---------------------------------------------------------------- scheduling
 
@@ -79,6 +99,7 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
         onNumbersFresh: () => {
             requestPanelSync('recount');
             void cache.flush();
+            noteNumbersFreshForSwitch();
         },
         onRecountError: error => reportRecountError(error),
     });
@@ -259,6 +280,7 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
         onAssemblyFresh(reason) {
             scheduler.markFresh(reason);
             requestPanelSync(reason);
+            noteNumbersFreshForSwitch();
         },
         attachTokenCache(instance) {
             attachTokenCache(instance);
@@ -361,9 +383,22 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
         onWindowStart: () => {
             scheduler.markDirty('preset-window');
         },
-        onWindowEnd: ({ conflicts }) => {
+        onWindowEnd: ({ reason, conflicts, durationMs, replayMs, closedAt }) => {
+            metrics.record('presetReplay', replayMs);
+            const isSwitch = reason === 'preset-changed-after' || reason === 'preset-changed';
+            if (isSwitch) {
+                metrics.record('presetApply', durationMs);
+                lastPresetAppliedAt = closedAt || Date.now();
+                freshAfterSwitchPending = true;
+            }
             requestPanelSync('preset-window');
             scheduler.schedule('preset-window');
+            if (isSwitch) {
+                // A preset switch is a completed gesture, not an ongoing edit: the
+                // recount may start once it has settled instead of waiting out the
+                // full quiet time that typing and scrubbing need.
+                scheduler.noteDiscreteAction('preset-switch');
+            }
             if (conflicts.length > 0) {
                 diagnostics.info(`Preset window replay reported ${conflicts.length} conflict(s)`);
             }

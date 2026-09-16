@@ -40,7 +40,7 @@ export async function init() {
 
         const context = getContext();
         const settings = createSettings(context);
-        const diagnostics = createDiagnostics({ isVerbose: () => settings.get().diagnostics });
+        const diagnostics = createDiagnostics();
 
         runtime = createRuntime({
             context,

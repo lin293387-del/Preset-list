@@ -42,7 +42,7 @@ function createElement({ id = 'field', inLeftNav = true, value = 'v', type = 'te
     };
 }
 
-function createHarness({ coalescePresetEvents = true, onDispatch, reportPresetConflicts = true } = {}) {
+function createHarness({ coalescePresetEvents = true, onDispatch, onWindowEnd, reportPresetConflicts = true } = {}) {
     const dispatched = [];
     const conflicts = [];
     const $ = createFakeJQuery((elements, type, data) => {
@@ -63,6 +63,7 @@ function createHarness({ coalescePresetEvents = true, onDispatch, reportPresetCo
             noteOnce() {},
             recordConflict: conflict => conflicts.push(conflict),
         },
+        onWindowEnd,
     });
 
     coalescer.install($);
@@ -92,6 +93,25 @@ test('preset input events are coalesced inside the window and replayed once per 
     assert.equal(dispatched[0].type, 'input');
     assert.deepEqual(dispatched[0].data, { source: 'preset' });
     assert.equal(coalescer.pendingCount(), 0);
+});
+
+test('the window summary reports how long the apply loop and the replay took', async () => {
+    /** @type {any[]} */
+    const summaries = [];
+    const { $, coalescer } = createHarness({ onWindowEnd: summary => summaries.push(summary) });
+    const field = createElement({ id: 'temp_openai' });
+
+    coalescer.open();
+    $(field).trigger('input', { source: 'preset' });
+    coalescer.close('preset-changed-after');
+    await flushMacrotask();
+
+    assert.equal(summaries.length, 1);
+    assert.equal(summaries[0].reason, 'preset-changed-after');
+    assert.equal(summaries[0].replayed, 1);
+    assert.equal(Number.isFinite(summaries[0].durationMs), true, 'the apply loop is timed');
+    assert.equal(Number.isFinite(summaries[0].replayMs), true, 'the replay is timed');
+    assert.equal(Number.isFinite(summaries[0].closedAt), true, 'the close timestamp is reported');
 });
 
 test('non preset events keep their original timing', async () => {

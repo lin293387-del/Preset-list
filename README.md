@@ -60,13 +60,21 @@ Uninstall = disable or delete the extension; no data outside the extension store
 | Coalesce preset apply events | on | Merges the preset-apply `input` storm; `change` events and everything outside the left navigation panel keep their original timing. |
 | Report preset field conflicts | on | If a replayed handler rewrites a field the preset just wrote, that field is listed in the status area instead of being silently swallowed. |
 | Persist the token cache | on | Counts are cached per model + content, so returning to a preset (or restarting) is instant. |
-| Recount delay (ms) | 250 | Quiet time after the last panel interaction before a recount may start. |
+| Recount delay (ms) | 250 | Quiet time after the last panel interaction before a recount may start. A preset switch is treated as a completed action: it only waits a short settle window (120 ms), so its numbers refresh right away. |
 | Token cache entries | 4000 | LRU bound. |
-| Verbose diagnostics | off | Console logging plus the diagnostics list. |
 | Let the perf HUD ignore touches | on | The host HUD is a fixed overlay; with this on only its drag header accepts input, so the area it covers stays usable. |
 
-Buttons: **Clear token cache**. The status line below keeps reporting the cache, the last panel sync
-and whether a token recount is still pending.
+Buttons: **Clear token cache**. The status line below keeps reporting the cache, the last panel sync,
+whether a token recount is still pending, and the measured phases of the last preset switch:
+
+```
+timing: apply 18ms · replay 4ms · panel 21ms · recount 260ms · token api 90ms · numbers 480ms
+```
+
+`apply` is the upstream preset-apply loop, `replay` the coalesced `input` handling, `panel` the
+incremental row sync, `recount` the dry run, `token api` how long one uncached tokenizer call took
+(every value is cached afterwards), and `numbers` how long the switch needed to show exact numbers
+again. Only `token api` ever leaves the frontend; everything else is local work.
 
 Runtime API for the console:
 
@@ -128,7 +136,7 @@ recount would also be the last one, and prompts that were not counted yet would 
 
 ```
 npm install          # devDependencies: typescript, happy-dom
-npm test             # 81 tests: pure logic, panel DOM reconciliation, patch layer, runtime smoke
+npm test             # 84 tests: pure logic, panel DOM reconciliation, patch layer, runtime smoke
 npm run typecheck    # tsc --noEmit with checkJs (JSDoc types, no build step)
 ```
 
@@ -189,6 +197,11 @@ MIT — see [LICENSE](LICENSE).
 **验证**：打开左栏「AI 响应配置」面板，交互结束后 token 数字应在一个空闲窗口内刷新成真实值；
 只有真正没有 token（被禁用/内容为空）的提示词才显示 `-`。
 
+**切预设之后数字多久刷新**：设置区状态行里的 `timing:` 一行给出了实测拆分，依次是上游写字段的
+apply、合并事件回放的 replay、增量重绘的 panel、空闲重算的 recount、其中真正走到后端 tokenizer 的
+token api，以及从切换完成到数字变精确的 numbers。切换预设本身不读磁盘、不读后端：预设一直在内存里，
+唯一的后端往返就是 token 计数。
+
 **注意**：token 数字在交互后会滞后一个空闲窗口才刷新（默认保留上次数字并灰显）；上游若大改
 PromptManager 结构，插件会自动降级为原生渲染并在状态区标注，不会把面板画坏。设置区只保留
-「Clear token cache」和状态行，压测/报告/HUD 开关三个按钮已经移除。
+「Clear token cache」和状态行，压测/报告/HUD 开关以及「详细诊断日志」勾选框都已移除。

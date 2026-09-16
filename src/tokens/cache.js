@@ -106,8 +106,9 @@ function parsePersistedCache(raw, onStorageError) {
  * @param {string} options.namespace
  * @param {(settings: any) => string} options.resolveModel Resolves the tokenizer model for a settings object.
  * @param {ReturnType<typeof createStorage>} [options.storage] Override for tests.
+ * @param {{ startSpan: (label: string) => () => number } | null} [options.metrics] Records how long a real count took.
  */
-export function createTokenCountCache({ settings, diagnostics, namespace, resolveModel, storage }) {
+export function createTokenCountCache({ settings, diagnostics, namespace, resolveModel, storage, metrics = null }) {
     const backingStore = storage ?? createStorage({ namespace, key: STORAGE_KEY });
     /** @type {Map<string, number>} */
     const entries = new Map();
@@ -253,7 +254,17 @@ export function createTokenCountCache({ settings, diagnostics, namespace, resolv
                 }
 
                 stats.misses += 1;
-                const value = await callOriginal();
+                // Counts are memoised per message, so the remaining work is the
+                // upstream call itself: serialisation plus (on a cold cache) the
+                // tokenizer round trip. Measuring it is the only way to tell a
+                // slow backend from a slow assembly.
+                const endSpan = metrics?.startSpan('tokenCount') ?? null;
+                let value;
+                try {
+                    value = await callOriginal();
+                } finally {
+                    endSpan?.();
+                }
                 if (typeof value === 'number' && Number.isFinite(value)) {
                     entries.set(key, value);
                     evictIfNeeded();

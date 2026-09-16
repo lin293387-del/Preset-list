@@ -12,7 +12,6 @@
     "Stores token counts per model and content, so switching back to a preset is instant even after a restart.": "按模型与内容缓存 token 计数，重启后切回同一个预设也能立刻显示精确值。",
     "Recount delay (ms)": "重算延迟（毫秒）",
     "Token cache entries": "token 缓存条目上限",
-    "Verbose diagnostics": "详细诊断日志",
     "Clear token cache": "清空 token 缓存",
     "Let the perf HUD ignore touches": "让性能 HUD 不遮挡触摸",
     "The host performance HUD is a fixed overlay that covers whatever is behind it. With this on, only its drag header reacts to touches, so the covered area stays usable.": "宿主性能 HUD 是固定悬浮层，会遮住它下面的区域。开启后只有它顶部那一行拖拽条响应触摸，被覆盖的区域恢复可用。"

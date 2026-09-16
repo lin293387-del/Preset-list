@@ -68,11 +68,11 @@ function snapshotValue(element) {
  * @param {object} options
  * @param {{ get: () => { coalescePresetEvents: boolean, reportPresetConflicts: boolean } }} options.settings
  * @param {{ info: Function, warn: Function, recordConflict: Function, noteOnce: Function }} options.diagnostics
- * @param {(summary: { reason: string, replayed: number, conflicts: Array<object>, durationMs: number }) => void} [options.onWindowEnd]
+ * @param {(summary: { reason: string, replayed: number, conflicts: Array<object>, durationMs: number, replayMs: number, closedAt: number }) => void} [options.onWindowEnd]
  * @param {() => void} [options.onWindowStart]
  */
 export function createPresetWindowCoalescer({ settings, diagnostics, onWindowEnd, onWindowStart }) {
-    const stats = { windows: 0, deferred: 0, replayed: 0, conflicts: 0, lastDurationMs: 0 };
+    const stats = { windows: 0, deferred: 0, replayed: 0, conflicts: 0, lastDurationMs: 0, lastReplayMs: 0, lastClosedAt: 0 };
 
     let installed = false;
     let active = false;
@@ -131,7 +131,8 @@ export function createPresetWindowCoalescer({ settings, diagnostics, onWindowEnd
         }
         active = false;
         clearSafetyTimer();
-        stats.lastDurationMs = Date.now() - openedAt;
+        stats.lastClosedAt = Date.now();
+        stats.lastDurationMs = stats.lastClosedAt - openedAt;
 
         const entries = [...deferred.entries()];
         deferred = new Map();
@@ -149,6 +150,7 @@ export function createPresetWindowCoalescer({ settings, diagnostics, onWindowEnd
     function replay(entries, reason) {
         stats.deferred += entries.length;
         const conflicts = [];
+        const startedAt = Date.now();
 
         for (const [element, record] of entries) {
             const before = snapshotValue(element);
@@ -170,6 +172,8 @@ export function createPresetWindowCoalescer({ settings, diagnostics, onWindowEnd
             }
         }
 
+        stats.lastReplayMs = Date.now() - startedAt;
+
         if (conflicts.length > 0) {
             diagnostics.noteOnce(
                 'preset-conflicts',
@@ -177,7 +181,14 @@ export function createPresetWindowCoalescer({ settings, diagnostics, onWindowEnd
             );
         }
 
-        onWindowEnd?.({ reason, replayed: stats.replayed, conflicts, durationMs: stats.lastDurationMs });
+        onWindowEnd?.({
+            reason,
+            replayed: stats.replayed,
+            conflicts,
+            durationMs: stats.lastDurationMs,
+            replayMs: stats.lastReplayMs,
+            closedAt: stats.lastClosedAt,
+        });
     }
 
     /**

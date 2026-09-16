@@ -9,7 +9,7 @@
         "zh-cn": "i18n/zh-cn.json"
     },
     "author": "lin293387-del",
-    "version": "0.1.3",
+    "version": "0.1.4",
     "description": "Keeps the chat-completion preset and prompt panel light: incremental row rendering, idle token recounts, preset event coalescing.",
     "homePage": "https://github.com/lin293387-del/Preset-list",
     "hooks": {

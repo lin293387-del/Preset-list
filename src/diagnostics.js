@@ -1,14 +1,17 @@
 // @ts-check
 /**
  * Diagnostics: bounded, greppable evidence for everything this extension does
- * behind the scenes. Warnings and errors always reach the console; verbose
- * logging and the in-panel report are opt-in.
+ * behind the scenes.
+ *
+ * Warnings and errors always reach the console. Routine notes are only kept in
+ * memory (the last few dozen) and are read through `__PRESET_LITE__.snapshot()`,
+ * so hot paths can report what they did without flooding the console.
  */
 
 const MAX_NOTES = 60;
 const MAX_CONFLICTS = 40;
 
-export function createDiagnostics({ isVerbose }) {
+export function createDiagnostics() {
     const prefix = '[Preset Lite]';
     /** @type {Array<{ at: number, kind: string, message: string }>} */
     const notes = [];
@@ -27,11 +30,8 @@ export function createDiagnostics({ isVerbose }) {
     }
 
     return {
-        info(message, ...args) {
-            if (!isVerbose()) {
-                return;
-            }
-            console.log(`${prefix} ${message}`, ...args);
+        /** Records a routine note for `snapshot()` without writing to the console. */
+        info(message) {
             push('info', message);
         },
         warn(message, ...args) {
@@ -42,12 +42,11 @@ export function createDiagnostics({ isVerbose }) {
             console.error(`${prefix} ${message}`, ...args);
             push('error', message);
         },
-        /** Logs once per key so hot paths cannot flood the console. */
-        noteOnce(key, message, ...args) {
+        /** Records once per key so hot paths cannot flood the note list. */
+        noteOnce(key, message) {
             const count = (onceKeys.get(key) ?? 0) + 1;
             onceKeys.set(key, count);
             if (count === 1) {
-                this.info(message, ...args);
                 push('note', message);
             }
         },

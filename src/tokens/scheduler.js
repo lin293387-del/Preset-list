@@ -44,6 +44,13 @@ const RETRY_INTERVAL_MS = 250;
  * only delay the numbers instead of freezing them at "-".
  */
 const BUSY_RECHECK_MS = 2000;
+/**
+ * A preset switch is a discrete action: unlike typing or scrubbing it cannot
+ * still be in progress, so the recount only has to wait out a short settle
+ * window. This keeps the quiet-time setting from postponing a switch recount by
+ * its full value while still debouncing a rapid run through the preset list.
+ */
+const PRESET_SETTLE_MS = 120;
 
 /**
  * @typedef {object} SchedulerSettings
@@ -143,6 +150,25 @@ export function createRecountScheduler({
         };
     }
 
+    /**
+     * Retry delay for a recount that is parked on a wait with a known end, so it
+     * starts as soon as the wait is over instead of at the next polling tick.
+     *
+     * @returns {number}
+     */
+    function retryDelay() {
+        if (isBusy()) {
+            return BUSY_RECHECK_MS;
+        }
+        if (state.lastInteractionAt !== null) {
+            const remaining = settings.get().idleDelayMs - (scheduler.now() - state.lastInteractionAt);
+            if (remaining > 0) {
+                return Math.max(16, remaining);
+            }
+        }
+        return RETRY_INTERVAL_MS;
+    }
+
     function arm() {
         if (stopped || !state.dirty || state.running || pending) {
             return;
@@ -152,7 +178,7 @@ export function createRecountScheduler({
             if (isVisible()) {
                 // Event-driven wake-ups normally end a park; the timer is the
                 // safety net for the ones that never arrive.
-                armRetry(isBusy() ? BUSY_RECHECK_MS : RETRY_INTERVAL_MS);
+                armRetry(retryDelay());
             }
             return;
         }
@@ -279,6 +305,27 @@ export function createRecountScheduler({
             if (hadPending) {
                 diagnostics.info(`Recount deferred after ${kind}`);
             }
+            arm();
+        },
+        /**
+         * A discrete action finished (for example a preset switch). Its
+         * interaction hold is shortened to `settleMs`, so the numbers refresh
+         * right after the action instead of after the full quiet time — while a
+         * rapid sequence of the same action still postpones the recount.
+         *
+         * @param {string} kind
+         * @param {number} [settleMs]
+         */
+        noteDiscreteAction(kind, settleMs = PRESET_SETTLE_MS) {
+            const idleDelayMs = settings.get().idleDelayMs;
+            // Replace the hold instead of extending it: the action is over, so the
+            // tap that started it must not keep the recount parked any longer.
+            state.lastInteractionAt = scheduler.now() - Math.max(0, idleDelayMs - settleMs);
+            if (!state.dirty || state.running) {
+                return;
+            }
+            cancelPending();
+            diagnostics.info(`Recount settles after ${kind}`);
             arm();
         },
         /** Called when visibility/busy flags change so a parked recount can resume. */

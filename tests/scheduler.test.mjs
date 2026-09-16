@@ -156,6 +156,36 @@ test('interactions push the recount past the quiet window', async () => {
     assert.equal(calls.runs, 1);
 });
 
+test('the configured quiet time is used as-is, not rounded up to a retry tick', async () => {
+    const { scheduler, api, calls } = createHarness({ settings: { idleDelayMs: 50 } });
+
+    api.noteInteraction('typing');
+    api.schedule('first');
+    await scheduler.advance(40);
+
+    assert.equal(calls.runs, 0, 'the quiet window is still open');
+
+    await scheduler.advance(20);
+
+    assert.equal(calls.runs, 1, 'a short quiet time must not wait for a polling tick');
+});
+
+test('a discrete action replaces the tap hold with a short settle window', async () => {
+    const { scheduler, api, calls } = createHarness();
+
+    api.noteInteraction('pointerdown');
+    api.schedule('preset-window');
+    await scheduler.advance(100);
+    assert.equal(calls.runs, 0, 'the tap that started the action still holds the recount');
+
+    api.noteDiscreteAction('preset-switch', 120);
+    await scheduler.advance(100);
+    assert.equal(calls.runs, 0, 'the action has to settle first');
+
+    await scheduler.advance(40);
+    assert.equal(calls.runs, 1, 'the recount starts right after the settle window');
+});
+
 test('a hidden panel parks the recount until it becomes visible again', async () => {
     const { scheduler, api, calls } = createHarness();
 

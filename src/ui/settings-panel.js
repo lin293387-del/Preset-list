@@ -18,7 +18,6 @@ const CONTROLS = Object.freeze({
     coalescePresetEvents: 'preset_lite_coalesce',
     reportPresetConflicts: 'preset_lite_report_conflicts',
     persistentTokenCache: 'preset_lite_persist_cache',
-    diagnostics: 'preset_lite_diagnostics',
 });
 
 const NUMBER_CONTROLS = Object.freeze({
@@ -27,6 +26,20 @@ const NUMBER_CONTROLS = Object.freeze({
 });
 
 const CHECKBOX_KEYS = Object.freeze(Object.keys(CONTROLS));
+
+/**
+ * Phases of a preset switch, in the order the user experiences them. `numbers`
+ * is the one that answers "how long until the panel is right again"; the others
+ * are the last measured values of work that happens on every interaction.
+ */
+const TIMING_SPANS = Object.freeze([
+    ['presetApply', 'apply'],
+    ['presetReplay', 'replay'],
+    ['panelSync', 'panel'],
+    ['recount', 'recount'],
+    ['tokenCount', 'token api'],
+    ['numbersAfterSwitch', 'numbers'],
+]);
 
 /**
  * @param {object} options
@@ -101,6 +114,10 @@ export function createSettingsPanel({ context, settings, runtime, diagnostics, i
             `last panel sync: ${formatStats(snapshot.panel)}`,
             `pending recount: ${scheduler.dirty || scheduler.running ? 'yes' : 'no'}${scheduler.lastRun ? ` (last finished ${new Date(scheduler.lastRun).toLocaleTimeString()})` : ''}`,
         );
+        const timing = formatTiming(snapshot.metrics?.spans ?? {});
+        if (timing) {
+            lines.push(timing);
+        }
         const degraded = snapshot.diagnostics?.degradations ?? [];
         if (degraded.length > 0) {
             lines.push(`degraded: ${degraded.map(entry => entry.feature).join(', ')}`);
@@ -121,6 +138,25 @@ export function createSettingsPanel({ context, settings, runtime, diagnostics, i
         if (node) {
             node.textContent = text;
         }
+    }
+
+    /**
+     * Renders the measured phases of the last preset switch, skipping phases that
+     * have not happened yet.
+     *
+     * @param {Record<string, { lastMs?: number }>} spans
+     * @returns {string}
+     */
+    function formatTiming(spans) {
+        const parts = [];
+        for (const [label, text] of TIMING_SPANS) {
+            const lastMs = spans?.[label]?.lastMs;
+            if (typeof lastMs !== 'number' || !Number.isFinite(lastMs)) {
+                continue;
+            }
+            parts.push(`${text} ${Math.round(lastMs)}ms`);
+        }
+        return parts.length > 0 ? `timing: ${parts.join(' · ')}` : '';
     }
 
     /**
