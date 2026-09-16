@@ -60,7 +60,7 @@ Uninstall = disable or delete the extension; no data outside the extension store
 | Coalesce preset apply events | on | Merges the preset-apply `input` storm and replays it once at the end of the window. Fields the preset did not move are skipped, and a `change` event re-fired for an unmoved select is dropped. Everything else keeps its original timing. |
 | Report preset field conflicts | on | If a replayed handler rewrites a field the preset just wrote, that field is listed in the status area instead of being silently swallowed. |
 | Persist the token cache | on | Counts are cached per model + content, so returning to a preset (or restarting) is instant. |
-| Recount delay (ms) | 250 | Quiet time after the last panel interaction before a recount may start. A preset switch is treated as a completed action: it only waits a short settle window (120 ms), so its numbers refresh right away. |
+| Recount delay (ms) | 100 | Quiet time after the last panel interaction before a recount may start. A preset switch is treated as a completed action: it only waits a short settle window (120 ms), so its numbers refresh right away. |
 | Token cache entries | 4000 | LRU bound. |
 | Let the perf HUD ignore touches | on | The host HUD is a fixed overlay; with this on only its drag header accepts input, so the area it covers stays usable. |
 

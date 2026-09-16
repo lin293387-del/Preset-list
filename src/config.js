@@ -27,7 +27,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
     /** Keep the last known token numbers (dimmed) while a recount is pending. */
     keepStaleNumbers: true,
     /** Minimum quiet time after the last interaction before a recount may start. */
-    idleDelayMs: 250,
+    idleDelayMs: 100,
     /** Idle callback fallback budget: a recount is never postponed indefinitely. */
     idleTimeoutMs: 3000,
     /** Never start a recount while the user is scrolling or dragging rows. */

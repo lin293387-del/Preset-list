@@ -6,4 +6,4 @@
  * `tests/version.test.mjs`, because forgetting one of the three is the classic
  * way a release ends up reporting the wrong version.
  */
-export const VERSION = '0.1.6';
+export const VERSION = '0.1.7';

@@ -22,6 +22,7 @@ test('defaults are used when nothing is stored yet', () => {
 
     assert.equal(settings.get().enabled, DEFAULT_SETTINGS.enabled);
     assert.equal(settings.get().hudPassthrough, true, 'the HUD never blocks touches by default');
+    assert.equal(settings.get().idleDelayMs, 100, 'the default recount delay stays at 100 ms');
     assert.deepEqual(context.extensionSettings['preset-lite'], { ...DEFAULT_SETTINGS });
 });
 
