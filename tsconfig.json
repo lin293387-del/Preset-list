@@ -1,0 +1,47 @@
+{
+    "compilerOptions": {
+        "target": "ES2022",
+        "lib": [
+            "ES2022",
+            "DOM",
+            "DOM.Iterable"
+        ],
+        "module": "ESNext",
+        "moduleResolution": "Bundler",
+        "allowJs": true,
+        "checkJs": true,
+        "noEmit": true,
+        "strict": false,
+        "noFallthroughCasesInSwitch": true,
+        "noImplicitReturns": true,
+        "noUnusedLocals": true,
+        "noUnusedParameters": false,
+        "skipLibCheck": true,
+        "types": [],
+        "baseUrl": ".",
+        "paths": {
+            "/scripts/openai.js": [
+                "./types/upstream-openai.d.ts"
+            ],
+            "/scripts/PromptManager.js": [
+                "./types/upstream-prompt-manager.d.ts"
+            ],
+            "/scripts/tokenizers.js": [
+                "./types/upstream-tokenizers.d.ts"
+            ],
+            "/scripts/extensions.js": [
+                "./types/upstream-extensions.d.ts"
+            ]
+        },
+        "noImplicitAny": false,
+        "strictNullChecks": true,
+        "strictBindCallApply": true,
+        "noImplicitThis": true,
+        "alwaysStrict": true
+    },
+    "include": [
+        "index.js",
+        "src/**/*.js",
+        "types/**/*.d.ts"
+    ]
+}

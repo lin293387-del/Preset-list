@@ -1,0 +1,18 @@
+{
+    "display_name": "Preset Lite",
+    "loading_order": 10,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "css": "style.css",
+    "i18n": {
+        "zh-cn": "i18n/zh-cn.json"
+    },
+    "author": "lin293387-del",
+    "version": "0.1.0",
+    "description": "Keeps the chat-completion preset and prompt panel light: incremental row rendering, idle token recounts, preset event coalescing.",
+    "homePage": "https://github.com/lin293387-del/Preset-list",
+    "hooks": {
+        "activate": "init"
+    }
+}

@@ -1,0 +1,21 @@
+{
+    "Preset Lite": "预设轻量化",
+    "Enable Preset Lite": "启用预设轻量化",
+    "Reuses prompt rows instead of rebuilding the list and moves token recounts out of the interaction path. Turning this off restores stock behaviour without a reload.": "复用提示词行而不是整体重建列表，并把 token 重算移出交互路径。关闭后立即恢复原生行为，无需刷新。",
+    "Keep last known token numbers while recalculating": "重算期间保留上一次的 token 数字",
+    "When off, token numbers show - until the recount finishes (stock behaviour).": "关闭后，重算完成前 token 数字显示为 -（与原生行为一致）。",
+    "Coalesce preset apply events": "合并预设应用事件",
+    "Switching a preset writes about a hundred fields; identical input events are merged and replayed once at the end of the window.": "切换预设会写入上百个字段；相同的 input 事件会被合并，并在窗口结束时统一回放一次。",
+    "Report preset field conflicts": "报告预设字段冲突",
+    "If a replayed handler changes a field the preset just wrote, the field is listed in the report instead of being hidden.": "如果回放的事件处理器改写了预设刚写入的字段，该字段会出现在报告里，而不是被静默忽略。",
+    "Persist the token cache": "持久化 token 缓存",
+    "Stores token counts per model and content, so switching back to a preset is instant even after a restart.": "按模型与内容缓存 token 计数，重启后切回同一个预设也能立刻显示精确值。",
+    "Recount delay (ms)": "重算延迟（毫秒）",
+    "Token cache entries": "token 缓存条目上限",
+    "Verbose diagnostics": "详细诊断日志",
+    "Run benchmark": "运行压测",
+    "Clear token cache": "清空 token 缓存",
+    "Copy report": "复制报告",
+    "Enable perf HUD": "开启性能 HUD",
+    "The prompt/preset panel is rendered incrementally by Preset Lite.": "提示词/预设面板当前由预设轻量化插件进行增量渲染。"
+}

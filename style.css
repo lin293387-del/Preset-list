@@ -1,0 +1,77 @@
+/**
+ * Preset Lite styles.
+ *
+ * Everything is scoped to `body.tt-pl-on`, which the runtime toggles together
+ * with the master switch, so disabling the extension removes every visual change
+ * without a reload.
+ */
+
+body.tt-pl-on .preset-lite-settings .preset-lite-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5em;
+    margin: 0.5em 0;
+}
+
+body.tt-pl-on .preset-lite-settings .preset-lite-grid label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25em;
+}
+
+body.tt-pl-on .preset-lite-settings .preset-lite-buttons {
+    flex-wrap: wrap;
+    gap: 0.25em;
+    margin-top: 0.5em;
+}
+
+body.tt-pl-on .preset-lite-settings .preset-lite-status,
+body.tt-pl-on .preset-lite-settings .preset-lite-report {
+    white-space: pre-wrap;
+    font-family: var(--monoFontFamily, monospace);
+    font-size: calc(var(--mainFontSize) * 0.85);
+    background-color: var(--black30a);
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 5px;
+    padding: 0.5em;
+    margin-top: 0.5em;
+    max-height: 15em;
+    overflow: auto;
+}
+
+body.tt-pl-on .preset-lite-settings .preset-lite-status:empty,
+body.tt-pl-on .preset-lite-settings .preset-lite-report:empty {
+    display: none;
+}
+
+/*
+ * Dim - instead of blank - the numbers that are still being recalculated, so the
+ * panel never flashes a table full of placeholders after a toggle.
+ */
+body.tt-pl-on .completion_prompt_manager_header.tt-pl-stale {
+    opacity: 0.45;
+    transition: opacity 0.15s ease-in-out;
+}
+
+body.tt-pl-on .tt-pl-stale .prompt_manager_prompt_tokens {
+    opacity: 0.45;
+    transition: opacity 0.15s ease-in-out;
+}
+
+/*
+ * Long prompt lists: rows scrolled out of the viewport are skipped by the
+ * renderer instead of being laid out and painted after every interaction. This
+ * mirrors what the host already does for chat messages.
+ */
+@supports (content-visibility: auto) and (contain-intrinsic-block-size: auto 1.9rem) {
+    body.tt-pl-on #completion_prompt_manager_list > li.completion_prompt_manager_prompt {
+        content-visibility: auto;
+        contain-intrinsic-block-size: auto 1.9rem;
+    }
+
+    /* Row measurements must be exact while jQuery UI computes drop positions. */
+    body.tt-pl-dragging #completion_prompt_manager_list > li.completion_prompt_manager_prompt {
+        content-visibility: visible;
+        contain-intrinsic-block-size: none;
+    }
+}

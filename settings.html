@@ -1,0 +1,85 @@
+<div id="preset-lite-settings" class="preset-lite-settings">
+    <div class="inline-drawer">
+        <div class="inline-drawer-toggle inline-drawer-header">
+            <b data-i18n="Preset Lite">Preset Lite</b>
+            <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down"></div>
+        </div>
+        <div class="inline-drawer-content">
+            <label class="checkbox_label" for="preset_lite_enabled">
+                <input type="checkbox" id="preset_lite_enabled">
+                <span data-i18n="Enable Preset Lite">Enable Preset Lite</span>
+            </label>
+            <div class="toggle-description justifyLeft">
+                <span data-i18n="Reuses prompt rows instead of rebuilding the list and moves token recounts out of the interaction path. Turning this off restores stock behaviour without a reload.">
+                    Reuses prompt rows instead of rebuilding the list and moves token recounts out of the interaction path. Turning this off restores stock behaviour without a reload.
+                </span>
+            </div>
+
+            <label class="checkbox_label" for="preset_lite_keep_stale">
+                <input type="checkbox" id="preset_lite_keep_stale">
+                <span data-i18n="Keep last known token numbers while recalculating">Keep last known token numbers while recalculating</span>
+            </label>
+            <div class="toggle-description justifyLeft">
+                <span data-i18n="When off, token numbers show - until the recount finishes (stock behaviour).">
+                    When off, token numbers show - until the recount finishes (stock behaviour).
+                </span>
+            </div>
+
+            <label class="checkbox_label" for="preset_lite_coalesce">
+                <input type="checkbox" id="preset_lite_coalesce">
+                <span data-i18n="Coalesce preset apply events">Coalesce preset apply events</span>
+            </label>
+            <div class="toggle-description justifyLeft">
+                <span data-i18n="Switching a preset writes about a hundred fields; identical input events are merged and replayed once at the end of the window.">
+                    Switching a preset writes about a hundred fields; identical input events are merged and replayed once at the end of the window.
+                </span>
+            </div>
+
+            <label class="checkbox_label" for="preset_lite_report_conflicts">
+                <input type="checkbox" id="preset_lite_report_conflicts">
+                <span data-i18n="Report preset field conflicts">Report preset field conflicts</span>
+            </label>
+            <div class="toggle-description justifyLeft">
+                <span data-i18n="If a replayed handler changes a field the preset just wrote, the field is listed in the report instead of being hidden.">
+                    If a replayed handler changes a field the preset just wrote, the field is listed in the report instead of being hidden.
+                </span>
+            </div>
+
+            <label class="checkbox_label" for="preset_lite_persist_cache">
+                <input type="checkbox" id="preset_lite_persist_cache">
+                <span data-i18n="Persist the token cache">Persist the token cache</span>
+            </label>
+            <div class="toggle-description justifyLeft">
+                <span data-i18n="Stores token counts per model and content, so switching back to a preset is instant even after a restart.">
+                    Stores token counts per model and content, so switching back to a preset is instant even after a restart.
+                </span>
+            </div>
+
+            <div class="preset-lite-grid">
+                <label for="preset_lite_idle_delay">
+                    <span data-i18n="Recount delay (ms)">Recount delay (ms)</span>
+                    <input type="number" id="preset_lite_idle_delay" class="text_pole" min="0" max="5000" step="50">
+                </label>
+                <label for="preset_lite_cache_limit">
+                    <span data-i18n="Token cache entries">Token cache entries</span>
+                    <input type="number" id="preset_lite_cache_limit" class="text_pole" min="100" max="200000" step="100">
+                </label>
+            </div>
+
+            <label class="checkbox_label" for="preset_lite_diagnostics">
+                <input type="checkbox" id="preset_lite_diagnostics">
+                <span data-i18n="Verbose diagnostics">Verbose diagnostics</span>
+            </label>
+
+            <div class="preset-lite-buttons flex-container">
+                <div class="menu_button" id="preset_lite_run_bench" data-i18n="Run benchmark">Run benchmark</div>
+                <div class="menu_button" id="preset_lite_clear_cache" data-i18n="Clear token cache">Clear token cache</div>
+                <div class="menu_button" id="preset_lite_copy_report" data-i18n="Copy report">Copy report</div>
+                <div class="menu_button" id="preset_lite_enable_hud" data-i18n="Enable perf HUD">Enable perf HUD</div>
+            </div>
+
+            <div id="preset_lite_status" class="preset-lite-status"></div>
+            <pre id="preset_lite_report" class="preset-lite-report"></pre>
+        </div>
+    </div>
+</div>
