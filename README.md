@@ -75,8 +75,9 @@ timing: apply 410ms [fields 25 · chain 385] · replay 90ms [63 unchanged] · pa
 after it (`chain`); `replay` is the coalesced `input` handling, with how many fields the preset did
 not move; `panel` is the incremental row sync, `recount` the dry run, `token api` how long one
 uncached tokenizer call took (every value is cached afterwards), and `numbers` how long the switch
-needed to show exact numbers again. Only `token api` ever leaves the frontend; everything else is
-local work.
+needed to show exact numbers again — its `[wait …]` part is everything that happened *before* the
+recount could start (settle window plus whatever the browser deferred it by). Only `token api` ever
+leaves the frontend; everything else is local work.
 
 Runtime API for the console:
 
@@ -110,10 +111,13 @@ changed, and the extension falls back to stock rendering (listed as `degraded` i
 instead of dropping rows.
 
 Recounts are single-flight and only start when the panel is visible, no generation is running, and
-the user has stopped interacting/scrolling/dragging. Stale results are discarded by epoch. A
-prompt-assembly preview (the dry run that produces the numbers) is *not* a running generation: the
-host reports its start but never its end, so it must not park the scheduler — otherwise the first
-recount would also be the last one, and prompts that were not counted yet would keep showing `-`.
+the user has stopped interacting/scrolling/dragging. Stale results are discarded by epoch. A preset
+switch gets a small idle budget (150 ms): it still prefers a quiet moment, but it does not sit behind
+a repaint, because the numbers are what the user is waiting for. Ordinary edits keep the full idle
+timeout. A prompt-assembly preview (the dry run that produces the numbers) is *not* a running
+generation: the host reports its start but never its end, so it must not park the scheduler —
+otherwise the first recount would also be the last one, and prompts that were not counted yet would
+keep showing `-`.
 
 ---
 
@@ -138,7 +142,7 @@ recount would also be the last one, and prompts that were not counted yet would 
 
 ```
 npm install          # devDependencies: typescript, happy-dom
-npm test             # 89 tests: pure logic, panel DOM reconciliation, patch layer, runtime smoke
+npm test             # 90 tests: pure logic, panel DOM reconciliation, patch layer, runtime smoke
 npm run typecheck    # tsc --noEmit with checkJs (JSDoc types, no build step)
 ```
 
@@ -208,6 +212,10 @@ token api，以及从切换完成到数字变精确的 numbers。切换预设本
 `[n unchanged]`），预设没有真正移动的下拉框也不会重新触发 change（连接检查、模型下拉重建、
 角色卡重新分词都跟着省掉）；状态行的 `apply` 会拆成 `fields`（写字段）和 `chain`（其后的
 连接/模型链）两段，方便看时间花在哪。
+
+**numbers 是什么**：从预设切换完成到数字真正变精确的时间。它包含 `recount`（真正在算的部分）
+和 `[wait …]`（算之前等待的部分：稳定窗口 + 浏览器把这次空闲重算推迟了多久）。切换预设的重算
+最多只给浏览器 150ms 找空闲，所以它不会一直排在重绘后面；普通编辑仍按原来的空闲超时处理。
 
 **注意**：token 数字在交互后会滞后一个空闲窗口才刷新（默认保留上次数字并灰显）；上游若大改
 PromptManager 结构，插件会自动降级为原生渲染并在状态区标注，不会把面板画坏。设置区只保留

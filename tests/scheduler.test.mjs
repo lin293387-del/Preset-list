@@ -8,6 +8,8 @@ function createFakeScheduler() {
     let currentTime = 0;
     let nextHandle = 1;
     const timers = new Map();
+    /** Every idle request in order, so tests can read the wait budget. */
+    const idleTimeouts = [];
 
     async function flush() {
         for (let index = 0; index < 25; index += 1) {
@@ -25,9 +27,10 @@ function createFakeScheduler() {
         clearTimer(handle) {
             timers.delete(handle);
         },
-        requestIdle(fn) {
+        requestIdle(fn, timeoutMs) {
             const handle = nextHandle++;
             timers.set(handle, { at: currentTime + 1, fn });
+            idleTimeouts.push(timeoutMs);
             return handle;
         },
         cancelIdle(handle) {
@@ -55,6 +58,7 @@ function createFakeScheduler() {
             currentTime = target;
             await flush();
         },
+        idleTimeouts,
     };
 }
 
@@ -184,6 +188,21 @@ test('a discrete action replaces the tap hold with a short settle window', async
 
     await scheduler.advance(40);
     assert.equal(calls.runs, 1, 'the recount starts right after the settle window');
+});
+
+test('a preset switch bounds how long the browser may defer its recount', async () => {
+    const { scheduler, api, calls } = createHarness();
+
+    api.schedule('preset-window', { maxIdleWaitMs: 150 });
+    await scheduler.advance(10);
+
+    assert.equal(calls.runs, 1);
+    assert.equal(scheduler.idleTimeouts.at(-1), 150, 'the switch budget reaches the idle request');
+
+    api.schedule('typing');
+    await scheduler.advance(10);
+
+    assert.equal(scheduler.idleTimeouts.at(-1), 3000, 'a later recount gets the configured budget back');
 });
 
 test('a hidden panel parks the recount until it becomes visible again', async () => {

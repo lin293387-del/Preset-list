@@ -21,6 +21,12 @@ import { createBrowserScheduler, createRecountScheduler } from './tokens/schedul
 import { VERSION } from './version.js';
 
 const SCROLL_HOLD_MS = 160;
+/**
+ * A preset switch is something the user waits for, so its recount may not sit
+ * behind a repaint: the browser gets this long to find a quiet moment, then the
+ * recount runs anyway.
+ */
+const PRESET_RECOUNT_MAX_IDLE_WAIT_MS = 150;
 const INTERACTION_EVENTS = ['pointerdown', 'touchstart', 'keydown', 'wheel', 'scroll'];
 
 /**
@@ -100,6 +106,11 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
             requestPanelSync('recount');
             void cache.flush();
             noteNumbersFreshForSwitch();
+        },
+        onRecountStart: () => {
+            if (freshAfterSwitchPending && lastPresetAppliedAt !== null) {
+                metrics.record('presetRecountWait', Date.now() - lastPresetAppliedAt);
+            }
         },
         onRecountError: error => reportRecountError(error),
     });
@@ -396,7 +407,7 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
                 freshAfterSwitchPending = true;
             }
             requestPanelSync('preset-window');
-            scheduler.schedule('preset-window');
+            scheduler.schedule('preset-window', { maxIdleWaitMs: PRESET_RECOUNT_MAX_IDLE_WAIT_MS });
             if (isSwitch) {
                 // A preset switch is a completed gesture, not an ongoing edit: the
                 // recount may start once it has settled instead of waiting out the

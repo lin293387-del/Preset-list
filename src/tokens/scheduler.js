@@ -74,6 +74,7 @@ const PRESET_SETTLE_MS = 120;
  * @param {() => boolean} options.isInteractionHeld
  * @param {() => void} options.onNumbersFresh
  * @param {(error: unknown) => void} options.onRecountError
+ * @param {(reason: string) => void} [options.onRecountStart]
  * @param {ReturnType<typeof createBrowserScheduler>} [options.scheduler]
  * @param {{ startSpan: (label: string) => () => void } | null} [options.metrics]
  */
@@ -86,6 +87,7 @@ export function createRecountScheduler({
     isInteractionHeld,
     onNumbersFresh,
     onRecountError,
+    onRecountStart,
     scheduler = createBrowserScheduler(),
     metrics = null,
 }) {
@@ -103,6 +105,8 @@ export function createRecountScheduler({
     let pending = null;
     /** @type {Promise<void> | null} */
     let currentRun = null;
+    /** Upper bound for the next idle wait, set by `schedule()`. */
+    let idleWaitBudget = null;
     let stopped = false;
 
     function canStart() {
@@ -183,12 +187,17 @@ export function createRecountScheduler({
             return;
         }
 
+        // The idle budget is the caller's promise that this work is worth running
+        // even if the browser never reports a quiet moment: a preset switch is
+        // something the user is waiting for, so it must not sit behind a repaint.
+        const timeoutMs = Math.min(settings.get().idleTimeoutMs, idleWaitBudget ?? Number.POSITIVE_INFINITY);
+
         pending = {
             kind: 'idle',
             handle: scheduler.requestIdle(() => {
                 pending = null;
                 void run('idle');
-            }, settings.get().idleTimeoutMs),
+            }, timeoutMs),
         };
     }
 
@@ -215,6 +224,8 @@ export function createRecountScheduler({
         state.dirty = false;
         const epoch = ++state.epoch;
         const endSpan = metrics?.startSpan('recount') ?? null;
+        idleWaitBudget = null;
+        onRecountStart?.(reason);
 
         state.running = true;
         /** @type {unknown} */
@@ -282,11 +293,20 @@ export function createRecountScheduler({
         isRunning() {
             return state.running;
         },
-        /** Schedules a recount for the next suitable idle moment. */
-        schedule(reason) {
+        /**
+         * Schedules a recount for the next suitable idle moment.
+         *
+         * @param {string} reason
+         * @param {{ maxIdleWaitMs?: number }} [options] Bounds how long the browser
+         *   may defer this recount. Preset switches pass a small budget because the
+         *   user is waiting for the numbers.
+         */
+        schedule(reason, options = {}) {
             if (!settings.get().enabled || stopped) {
                 return;
             }
+            const budget = options?.maxIdleWaitMs;
+            idleWaitBudget = typeof budget === 'number' && Number.isFinite(budget) ? Math.max(0, budget) : null;
             state.dirty = true;
             if (state.running) {
                 return;

@@ -37,7 +37,6 @@ const TIMING_SPANS = Object.freeze([
     ['panelSync', 'panel'],
     ['recount', 'recount'],
     ['tokenCount', 'token api'],
-    ['numbersAfterSwitch', 'numbers'],
 ]);
 
 /**
@@ -187,6 +186,12 @@ export function createSettingsPanel({ context, settings, runtime, diagnostics, i
                 continue;
             }
             parts.push(`${text} ${Math.round(value)}ms`);
+        }
+        const numbers = lastMs('numbersAfterSwitch');
+        if (numbers !== null) {
+            const wait = lastMs('presetRecountWait');
+            const detail = wait !== null ? ` [wait ${Math.round(wait)}ms]` : '';
+            parts.push(`numbers ${Math.round(numbers)}ms${detail}`);
         }
         return parts.length > 0 ? `timing: ${parts.join(' · ')}` : '';
     }
