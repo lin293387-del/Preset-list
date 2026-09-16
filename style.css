@@ -25,6 +25,26 @@ body.tt-pl-on .preset-lite-settings .preset-lite-buttons {
     margin-top: 0.5em;
 }
 
+body.tt-pl-on .preset-lite-settings .preset-lite-bench {
+    white-space: pre-wrap;
+    font-size: calc(var(--mainFontSize) * 0.9);
+    color: var(--SmartThemeQuoteColor);
+    border-left: 3px solid var(--SmartThemeQuoteColor);
+    padding: 0.4em 0.6em;
+    margin-top: 0.5em;
+    max-height: 12em;
+    overflow: auto;
+}
+
+body.tt-pl-on .preset-lite-settings .preset-lite-bench:empty {
+    display: none;
+}
+
+body.tt-pl-on .preset-lite-settings .preset-lite-buttons .menu_button.tt-pl-busy {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
 body.tt-pl-on .preset-lite-settings .preset-lite-status,
 body.tt-pl-on .preset-lite-settings .preset-lite-report {
     white-space: pre-wrap;

@@ -19,8 +19,8 @@ import { createBench } from './perf/bench.js';
 import { createMetrics } from './perf/metrics.js';
 import { createTokenCountCache } from './tokens/cache.js';
 import { createBrowserScheduler, createRecountScheduler } from './tokens/scheduler.js';
+import { VERSION } from './version.js';
 
-const VERSION = '0.1.0';
 const SCROLL_HOLD_MS = 160;
 const INTERACTION_EVENTS = ['pointerdown', 'touchstart', 'keydown', 'wheel', 'scroll'];
 

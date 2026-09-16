@@ -94,6 +94,27 @@ show whether a recount ran.
 3. Run the benchmark and keep your hands off the device.
 4. Copy the report.
 
+### What a run looks like
+
+The benchmark drives the real UI, so it *is* visible — keep the AI Response Configuration panel in
+view:
+
+| When | On screen |
+| --- | --- |
+| immediately | the settings block logs `benchmark started` plus a `sample:` line saying how many toggleable rows, presets and scrollable pixels were found; the run button locks |
+| ~0-10 s | prompt rows flip on and off, 60 times (~120 ms apart) — this is the **baseline** pass, so it deliberately feels like stock |
+| ~10-13 s | quiet settle window (this is where upstream runs its dry run) |
+| ~13-22 s | the preset dropdown switches ~6 times |
+| ~22-25 s | second quiet settle |
+| ~25-27 s | the left panel scrolls up and down for 2 s |
+| then again | the same sequence with Preset Lite **enabled** |
+| end | `benchmark finished (n phases)` and the report table below |
+
+Progress lines are appended with a timestamp and are never overwritten by the periodic status line;
+the same messages are mirrored to the DevTools console. If a phase has nothing to exercise (no
+toggleable rows, fewer than two presets, panel not scrollable) the `sample:` line says so instead of
+the run quietly doing nothing. A full A/B run takes about a minute.
+
 Targets used for acceptance:
 
 | Phase | Target |

@@ -66,10 +66,40 @@ export function createSettingsPanel({ context, settings, runtime, diagnostics, i
         }
     }
 
+    /**
+     * Routine snapshot; refreshed on a timer, so transient messages never go here.
+     *
+     * @param {string} text
+     */
     function setStatus(text) {
         const node = document.getElementById('preset_lite_status');
         if (node) {
             node.textContent = text;
+        }
+    }
+
+    /**
+     * Sticky action feedback: benchmark progress, failures and confirmations.
+     * Appends with a timestamp so a failed run cannot flash by unnoticed.
+     *
+     * @param {string} text
+     */
+    function pushBenchMessage(text) {
+        const node = document.getElementById('preset_lite_bench');
+        if (!node) {
+            return;
+        }
+        const stamp = new Date().toLocaleTimeString();
+        const line = `[${stamp}] ${text}`;
+        node.textContent = node.textContent ? `${node.textContent}\n${line}` : line;
+        node.scrollTop = node.scrollHeight;
+    }
+
+    function setBenchBusy(busy) {
+        const button = document.getElementById('preset_lite_run_bench');
+        button?.classList.toggle('tt-pl-busy', busy);
+        if (button instanceof HTMLElement) {
+            button.setAttribute('aria-busy', busy ? 'true' : 'false');
         }
     }
 
@@ -206,25 +236,36 @@ export function createSettingsPanel({ context, settings, runtime, diagnostics, i
 
         document.getElementById('preset_lite_run_bench')?.addEventListener('click', async () => {
             if (runtime.bench.isRunning()) {
-                setStatus('benchmark already running');
+                pushBenchMessage('benchmark already running');
                 return;
             }
-            setStatus('benchmark running… keep the panel open and do not interact with the device');
+
+            pushBenchMessage('benchmark started — keep the AI Response Configuration panel open and do not interact with the device');
+            setBenchBusy(true);
             try {
-                lastReport = await runtime.bench.run();
+                lastReport = await runtime.bench.run({
+                    onProgress: ({ message }) => {
+                        pushBenchMessage(message);
+                        // Also visible in DevTools, so a run can be watched from there.
+                        console.log(`[Preset Lite][benchmark] ${message}`);
+                    },
+                });
                 renderReport(lastReport);
-                setStatus('benchmark finished');
+                const phases = lastReport.phases?.length ?? 0;
+                pushBenchMessage(`benchmark finished (${phases} phases). The report below can be copied.`);
             } catch (error) {
                 const message = error instanceof Error ? error.message : String(error);
                 diagnostics.warn('Benchmark failed:', error);
-                setStatus(`benchmark failed: ${message}`);
+                pushBenchMessage(`benchmark failed: ${message}`);
+            } finally {
+                setBenchBusy(false);
             }
             refreshStatus();
         });
 
         document.getElementById('preset_lite_clear_cache')?.addEventListener('click', async () => {
             await runtime.clearCache();
-            setStatus('token cache cleared');
+            pushBenchMessage('token cache cleared');
             refreshStatus();
         });
 
@@ -233,7 +274,7 @@ export function createSettingsPanel({ context, settings, runtime, diagnostics, i
                 ? JSON.stringify({ report: lastReport, snapshot: runtime.snapshot() }, null, 2)
                 : JSON.stringify({ snapshot: runtime.snapshot() }, null, 2);
             const copied = await copyText(payload);
-            setStatus(copied ? 'report copied to clipboard' : 'copy failed, see console');
+            pushBenchMessage(copied ? 'report copied to clipboard' : 'copy failed, see console');
             if (!copied) {
                 console.log('[Preset Lite] report', payload);
             }
@@ -242,10 +283,10 @@ export function createSettingsPanel({ context, settings, runtime, diagnostics, i
         document.getElementById('preset_lite_enable_hud')?.addEventListener('click', () => {
             try {
                 globalThis.localStorage?.setItem('tt:perf', '1');
-                setStatus('perf HUD enabled; restart the app and press Ctrl+Alt+P');
+                pushBenchMessage('perf HUD enabled; restart the app and press Ctrl+Alt+P');
             } catch (error) {
                 diagnostics.warn('Could not enable the perf HUD:', error);
-                setStatus('could not write the perf HUD flag');
+                pushBenchMessage('could not write the perf HUD flag');
             }
         });
     }

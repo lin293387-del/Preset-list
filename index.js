@@ -10,12 +10,11 @@
  */
 
 import { createSettings } from './src/config.js';
+import { VERSION } from './src/version.js';
 import { createDiagnostics } from './src/diagnostics.js';
 import { getContext, resolveExtensionIdentity, waitForAppReady } from './src/host.js';
 import { createRuntime } from './src/runtime.js';
 import { createSettingsPanel } from './src/ui/settings-panel.js';
-
-const VERSION = '0.1.0';
 
 let booted = false;
 

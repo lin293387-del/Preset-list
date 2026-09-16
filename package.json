@@ -1,6 +1,6 @@
 {
   "name": "preset-lite",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "TauriTavern third-party extension: incremental rendering and idle token recounts for the chat-completion preset/prompt panel.",

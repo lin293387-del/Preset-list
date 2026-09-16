@@ -24,6 +24,12 @@ const DEFAULTS = Object.freeze({
     settleMs: 2500,
     /** 'ab' | 'optimized' | 'baseline' */
     mode: 'ab',
+    /**
+     * Progress sink, called with human readable steps while the run is active.
+     *
+     * @type {((progress: { message: string }) => void) | null}
+     */
+    onProgress: null,
 });
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -39,12 +45,59 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 export function createBench({ settings, metrics, diagnostics, runtime, getJQuery }) {
     let running = false;
     let aborted = false;
+    /** @type {(progress: { message: string }) => void} */
+    let progressSink = () => {};
     /** @type {Array<() => void | Promise<void>>} */
     let restorers = [];
 
     /**
      * @returns {HTMLElement}
      */
+    /**
+     * @param {string} message
+     */
+    function progress(message) {
+        try {
+            progressSink({ message });
+        } catch (error) {
+            diagnostics.warn('Benchmark progress sink failed:', error);
+        }
+    }
+
+    /**
+     * Describes what the run will actually be able to exercise, so a phase that
+     * has nothing to do says so instead of looking like nothing happened.
+     *
+     * @returns {string[]}
+     */
+    function describePreflight() {
+        const list = document.getElementById('completion_prompt_manager_list');
+        const toggleable = list
+            ? Array.from(list.children).filter(node => node.querySelector('.prompt-manager-toggle-action')).length
+            : 0;
+        const presetSelect = document.getElementById('settings_preset_openai');
+        const presetCount = presetSelect instanceof HTMLSelectElement
+            ? Array.from(presetSelect.options).filter(option => option.value !== 'gui').length
+            : 0;
+        const container = document.getElementById('completion_prompt_manager');
+        const scroller = container?.closest('.scrollableInner');
+        const scrollable = scroller instanceof HTMLElement ? scroller.scrollHeight - scroller.clientHeight : 0;
+
+        const notes = [
+            `sample: ${toggleable} toggleable prompt rows, ${presetCount} presets, ${Math.max(0, Math.round(scrollable))} scrollable px`,
+        ];
+        if (toggleable === 0) {
+            notes.push('WARNING: no toggleable prompt rows, the toggle phase will be skipped');
+        }
+        if (presetCount < 2) {
+            notes.push('WARNING: fewer than two presets, the preset switching phase will be skipped');
+        }
+        if (scrollable <= 0) {
+            notes.push('WARNING: the panel does not scroll, the scroll phase will be skipped');
+        }
+        return notes;
+    }
+
     function requireElement(id) {
         const element = document.getElementById(id);
         if (!(element instanceof HTMLElement)) {
@@ -211,10 +264,21 @@ export function createBench({ settings, metrics, diagnostics, runtime, getJQuery
 
         /** @type {Promise<void>} */
         const scrollDone = new Promise(resolve => {
-            const finish = () => resolve();
+            let settled = false;
+            const finish = () => {
+                if (settled) {
+                    return;
+                }
+                settled = true;
+                resolve();
+            };
+            // A hidden or throttled window may never deliver another frame; this
+            // guard keeps the phase (and the whole run) bounded.
+            const guard = setTimeout(finish, scrollMs + 2000);
             const step = () => {
                 const elapsed = (globalThis.performance?.now?.() ?? Date.now()) - start;
                 if (elapsed >= scrollMs || aborted) {
+                    clearTimeout(guard);
                     finish();
                     return;
                 }
@@ -256,6 +320,8 @@ export function createBench({ settings, metrics, diagnostics, runtime, getJQuery
      * @param {object} options
      */
     async function runPhase(name, runner, options, sink) {
+        const index = sink.length + 1;
+        progress(`phase ${index}: ${name} (${settings.get().enabled ? 'optimized' : 'baseline'}) …`);
         metrics.sampling.begin();
         const startedAt = (globalThis.performance?.now?.() ?? Date.now());
         let details = null;
@@ -266,6 +332,7 @@ export function createBench({ settings, metrics, diagnostics, runtime, getJQuery
             error = caught instanceof Error ? caught.message : String(caught);
         }
         const sampling = metrics.sampling.end();
+        progress(`phase ${index}: ${name} done — ${describePhase(sampling, details, error)}`);
         sink.push({
             name,
             mode: settings.get().enabled ? 'optimized' : 'baseline',
@@ -278,9 +345,26 @@ export function createBench({ settings, metrics, diagnostics, runtime, getJQuery
     }
 
     /**
+     * @param {any} sampling
+     * @param {any} details
+     * @param {string | null} error
+     * @returns {string}
+     */
+    function describePhase(sampling, details, error) {
+        if (error) {
+            return `error: ${error}`;
+        }
+        const frames = sampling.frames ?? {};
+        const longTasks = sampling.longTasks ?? {};
+        const note = details?.note ? ` (${details.note})` : '';
+        return `${longTasks.count ?? 0} long task(s), frame p95 ${(frames.p95Ms ?? 0).toFixed(1)} ms${note}`;
+    }
+
+    /**
      * @param {object} options
      */
     async function runMode(mode, options, sink) {
+        progress(`=== ${String(mode).toUpperCase()} run ===`);
         settings.update({ enabled: mode === 'optimized' });
         await delay(0);
 
@@ -310,6 +394,7 @@ export function createBench({ settings, metrics, diagnostics, runtime, getJQuery
         isRunning: () => running,
         abort() {
             aborted = true;
+            progress('abort requested');
         },
         /**
          * @param {Partial<typeof DEFAULTS>} overrides
@@ -323,8 +408,12 @@ export function createBench({ settings, metrics, diagnostics, runtime, getJQuery
             runtime.assertIdleForBench();
 
             const options = { ...DEFAULTS, ...overrides };
+            progressSink = typeof options.onProgress === 'function' ? options.onProgress : () => {};
             running = true;
             aborted = false;
+            for (const note of describePreflight()) {
+                progress(note);
+            }
 
             /** @type {object} */
             const report = {
@@ -338,12 +427,16 @@ export function createBench({ settings, metrics, diagnostics, runtime, getJQuery
             try {
                 const modes = options.mode === 'ab' ? ['baseline', 'optimized'] : [options.mode];
                 for (const mode of modes) {
+                    if (aborted) {
+                        break;
+                    }
                     await runMode(mode, options, report.phases);
                 }
                 report.comparison = comparePhases(report.phases);
             } finally {
                 await restoreAll();
                 running = false;
+                progress('restored prompt states and the preset selection');
                 diagnostics.info('Benchmark finished');
             }
 
