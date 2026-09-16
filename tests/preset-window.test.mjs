@@ -28,7 +28,7 @@ function createFakeJQuery(onDispatch) {
     return $;
 }
 
-function createElement({ id = 'field', inLeftNav = true, value = 'v', type = 'text' } = {}) {
+function createElement({ id = 'field', inLeftNav = true, value = 'v', type = 'text', tagName = 'INPUT' } = {}) {
     return {
         nodeType: 1,
         id,
@@ -36,13 +36,19 @@ function createElement({ id = 'field', inLeftNav = true, value = 'v', type = 'te
         value,
         checked: false,
         className: '',
-        tagName: 'INPUT',
+        tagName,
         getAttribute: () => null,
         closest: selector => (selector === '#left-nav-panel' && inLeftNav ? { nodeType: 1 } : null),
     };
 }
 
-function createHarness({ coalescePresetEvents = true, onDispatch, onWindowEnd, reportPresetConflicts = true } = {}) {
+function createHarness({
+    captureBaseline,
+    coalescePresetEvents = true,
+    onDispatch,
+    onWindowEnd,
+    reportPresetConflicts = true,
+} = {}) {
     const dispatched = [];
     const conflicts = [];
     const $ = createFakeJQuery((elements, type, data) => {
@@ -63,6 +69,7 @@ function createHarness({ coalescePresetEvents = true, onDispatch, onWindowEnd, r
             noteOnce() {},
             recordConflict: conflict => conflicts.push(conflict),
         },
+        captureBaseline,
         onWindowEnd,
     });
 
@@ -110,8 +117,84 @@ test('the window summary reports how long the apply loop and the replay took', a
     assert.equal(summaries[0].reason, 'preset-changed-after');
     assert.equal(summaries[0].replayed, 1);
     assert.equal(Number.isFinite(summaries[0].durationMs), true, 'the apply loop is timed');
+    assert.equal(Number.isFinite(summaries[0].fieldLoopMs), true, 'the field loop is timed separately');
+    assert.equal(Number.isFinite(summaries[0].chainMs), true, 'the chain after the loop is timed separately');
     assert.equal(Number.isFinite(summaries[0].replayMs), true, 'the replay is timed');
     assert.equal(Number.isFinite(summaries[0].closedAt), true, 'the close timestamp is reported');
+});
+
+test('fields the preset did not move are not replayed', async () => {
+    const untouched = createElement({ id: 'temp_openai', value: '1' });
+    const moved = createElement({ id: 'top_p_openai', value: '1' });
+    const { $, dispatched, coalescer } = createHarness({
+        captureBaseline: () => new Map([[untouched, '1'], [moved, '1']]),
+    });
+
+    coalescer.open();
+    $(untouched).trigger('input', { source: 'preset' });
+    moved.value = '2';
+    $(moved).trigger('input', { source: 'preset' });
+
+    coalescer.close('preset-changed-after');
+    await flushMacrotask();
+
+    assert.deepEqual(dispatched.map(call => call.elements[0].id), ['top_p_openai']);
+    assert.equal(coalescer.stats().lastUnchanged, 1, 'the skipped field is reported');
+    assert.equal(coalescer.stats().replayed, 1);
+});
+
+test('a change trigger on a select the preset did not move is dropped', () => {
+    const source = createElement({ id: 'chat_completion_source', value: 'openai', tagName: 'SELECT' });
+    const { $, dispatched, coalescer } = createHarness({
+        captureBaseline: () => new Map([[source, 'openai']]),
+    });
+
+    coalescer.open();
+    $(source).trigger('change');
+
+    assert.equal(dispatched.length, 0, 'an unchanged select does not re-run its handler');
+    assert.equal(coalescer.stats().redundantChanges, 1);
+});
+
+test('a change trigger whose select moved is still dispatched', () => {
+    const source = createElement({ id: 'chat_completion_source', value: 'openai', tagName: 'SELECT' });
+    const { $, dispatched, coalescer } = createHarness({
+        captureBaseline: () => new Map([[source, 'openai']]),
+    });
+
+    coalescer.open();
+    source.value = 'custom';
+    $(source).trigger('change');
+
+    assert.equal(dispatched.length, 1);
+    assert.equal(dispatched[0].type, 'change');
+    assert.equal(coalescer.stats().redundantChanges, 0);
+});
+
+test('a change trigger on another element type is never dropped', () => {
+    const toggle = createElement({ id: 'stream_toggle', type: 'checkbox', value: 'on' });
+    const { $, dispatched, coalescer } = createHarness({
+        captureBaseline: () => new Map([[toggle, 'on']]),
+    });
+
+    coalescer.open();
+    $(toggle).trigger('change');
+
+    assert.equal(dispatched.length, 1, 'only the selects upstream re-fires may be skipped');
+    assert.equal(coalescer.stats().redundantChanges, 0);
+});
+
+test('without a baseline every deferred event is replayed', async () => {
+    const field = createElement({ id: 'temp_openai', value: '1' });
+    const { $, dispatched, coalescer } = createHarness({ captureBaseline: () => null });
+
+    coalescer.open();
+    $(field).trigger('input', { source: 'preset' });
+    coalescer.close('preset-changed-after');
+    await flushMacrotask();
+
+    assert.equal(dispatched.length, 1, 'an unknown previous value must keep the handler');
+    assert.equal(coalescer.stats().lastUnchanged, 0);
 });
 
 test('non preset events keep their original timing', async () => {

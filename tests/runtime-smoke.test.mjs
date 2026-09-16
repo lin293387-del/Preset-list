@@ -398,6 +398,7 @@ describe('runtime smoke test', { skip: Window ? false : 'happy-dom is not instal
             });
 
             await app.eventSource.emit(app.eventTypes.OAI_PRESET_CHANGED_BEFORE, {});
+            field.value = '2'; // upstream writes the field before firing its event
             $(field).trigger('input', { source: 'preset' });
             assert.equal(handlerCalls, 0, 'preset input events are deferred inside the window');
 

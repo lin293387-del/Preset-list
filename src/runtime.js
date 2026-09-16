@@ -383,11 +383,15 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
         onWindowStart: () => {
             scheduler.markDirty('preset-window');
         },
-        onWindowEnd: ({ reason, conflicts, durationMs, replayMs, closedAt }) => {
+        onWindowEnd: ({ reason, conflicts, durationMs, fieldLoopMs, chainMs, replayMs, closedAt }) => {
             metrics.record('presetReplay', replayMs);
             const isSwitch = reason === 'preset-changed-after' || reason === 'preset-changed';
             if (isSwitch) {
                 metrics.record('presetApply', durationMs);
+                if (fieldLoopMs > 0) {
+                    metrics.record('presetApplyFields', fieldLoopMs);
+                }
+                metrics.record('presetApplyChain', chainMs);
                 lastPresetAppliedAt = closedAt || Date.now();
                 freshAfterSwitchPending = true;
             }

@@ -5,7 +5,7 @@
     "Keep last known token numbers while recalculating": "重算期间保留上一次的 token 数字",
     "When off, token numbers show - until the recount finishes (stock behaviour).": "关闭后，重算完成前 token 数字显示为 -（与原生行为一致）。",
     "Coalesce preset apply events": "合并预设应用事件",
-    "Switching a preset writes about a hundred fields; identical input events are merged and replayed once at the end of the window.": "切换预设会写入上百个字段；相同的 input 事件会被合并，并在窗口结束时统一回放一次。",
+    "Switching a preset writes about a hundred fields; their handlers are replayed once at the end of the window, and a field the preset did not move keeps its handler idle.": "切换预设会写入上百个字段；这些 handler 会在窗口结束时统一回放一次，预设没有改动的字段则不会被回放。",
     "Report preset field conflicts": "报告预设字段冲突",
     "If a replayed handler changes a field the preset just wrote, the field is listed in the report instead of being hidden.": "如果回放的事件处理器改写了预设刚写入的字段，该字段会出现在报告里，而不是被静默忽略。",
     "Persist the token cache": "持久化 token 缓存",

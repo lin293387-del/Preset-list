@@ -18,7 +18,7 @@ a reload.
 | --- | --- | --- |
 | Toggle / edit / delete / add a prompt | `#completion_prompt_manager` is cleared and fully rebuilt, ~4 listeners re-attached per row, scroll restored | only the affected row is replaced; unchanged rows keep their DOM nodes |
 | Token numbers | rebuilt list waits for a full dry run of the whole generation pipeline | interaction paints immediately, the dry run is coalesced and runs once while the browser is idle, numbers are then written in place |
-| Switching a preset | ~100 form writes each fire their own `input` handlers, then the panel rebuilds twice | the panel reacts once; identical preset `input` events are merged and replayed once at the end of the apply window |
+| Switching a preset | ~100 form writes each fire their own `input` handlers, then the panel rebuilds twice | the panel reacts once; the preset `input` events are replayed once at the end of the apply window, and fields the preset did not move are skipped |
 | Long lists | every row is laid out and painted on every interaction | rows scrolled out of view are skipped by the renderer (`content-visibility`), measurements are forced back on during drag & drop |
 
 **It does not** touch: text-completion/Kobold/NovelAI preset panels, the World Info or Advanced
@@ -57,7 +57,7 @@ Uninstall = disable or delete the extension; no data outside the extension store
 | --- | --- | --- |
 | Enable Preset Lite | on | Master switch. Off restores stock rendering instantly. |
 | Keep last known token numbers | on | While a recount is pending the numbers stay visible (dimmed). Off shows `-` like upstream. |
-| Coalesce preset apply events | on | Merges the preset-apply `input` storm; `change` events and everything outside the left navigation panel keep their original timing. |
+| Coalesce preset apply events | on | Merges the preset-apply `input` storm and replays it once at the end of the window. Fields the preset did not move are skipped, and a `change` event re-fired for an unmoved select is dropped. Everything else keeps its original timing. |
 | Report preset field conflicts | on | If a replayed handler rewrites a field the preset just wrote, that field is listed in the status area instead of being silently swallowed. |
 | Persist the token cache | on | Counts are cached per model + content, so returning to a preset (or restarting) is instant. |
 | Recount delay (ms) | 250 | Quiet time after the last panel interaction before a recount may start. A preset switch is treated as a completed action: it only waits a short settle window (120 ms), so its numbers refresh right away. |
@@ -68,13 +68,15 @@ Buttons: **Clear token cache**. The status line below keeps reporting the cache,
 whether a token recount is still pending, and the measured phases of the last preset switch:
 
 ```
-timing: apply 18ms · replay 4ms · panel 21ms · recount 260ms · token api 90ms · numbers 480ms
+timing: apply 410ms [fields 25 · chain 385] · replay 90ms [63 unchanged] · panel 62ms · recount 972ms · token api 4ms · numbers 480ms
 ```
 
-`apply` is the upstream preset-apply loop, `replay` the coalesced `input` handling, `panel` the
-incremental row sync, `recount` the dry run, `token api` how long one uncached tokenizer call took
-(every value is cached afterwards), and `numbers` how long the switch needed to show exact numbers
-again. Only `token api` ever leaves the frontend; everything else is local work.
+`apply` is the upstream preset apply, split into the field loop (`fields`) and the chain that runs
+after it (`chain`); `replay` is the coalesced `input` handling, with how many fields the preset did
+not move; `panel` is the incremental row sync, `recount` the dry run, `token api` how long one
+uncached tokenizer call took (every value is cached afterwards), and `numbers` how long the switch
+needed to show exact numbers again. Only `token api` ever leaves the frontend; everything else is
+local work.
 
 Runtime API for the console:
 
@@ -136,7 +138,7 @@ recount would also be the last one, and prompts that were not counted yet would 
 
 ```
 npm install          # devDependencies: typescript, happy-dom
-npm test             # 84 tests: pure logic, panel DOM reconciliation, patch layer, runtime smoke
+npm test             # 89 tests: pure logic, panel DOM reconciliation, patch layer, runtime smoke
 npm run typecheck    # tsc --noEmit with checkJs (JSDoc types, no build step)
 ```
 
@@ -201,6 +203,11 @@ MIT — see [LICENSE](LICENSE).
 apply、合并事件回放的 replay、增量重绘的 panel、空闲重算的 recount、其中真正走到后端 tokenizer 的
 token api，以及从切换完成到数字变精确的 numbers。切换预设本身不读磁盘、不读后端：预设一直在内存里，
 唯一的后端往返就是 token 计数。
+
+**切换预设时省掉了什么**：预设写进去、但值和原来一样的字段不会被回放（状态行会显示
+`[n unchanged]`），预设没有真正移动的下拉框也不会重新触发 change（连接检查、模型下拉重建、
+角色卡重新分词都跟着省掉）；状态行的 `apply` 会拆成 `fields`（写字段）和 `chain`（其后的
+连接/模型链）两段，方便看时间花在哪。
 
 **注意**：token 数字在交互后会滞后一个空闲窗口才刷新（默认保留上次数字并灰显）；上游若大改
 PromptManager 结构，插件会自动降级为原生渲染并在状态区标注，不会把面板画坏。设置区只保留

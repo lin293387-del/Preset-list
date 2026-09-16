@@ -28,13 +28,12 @@ const NUMBER_CONTROLS = Object.freeze({
 const CHECKBOX_KEYS = Object.freeze(Object.keys(CONTROLS));
 
 /**
- * Phases of a preset switch, in the order the user experiences them. `numbers`
- * is the one that answers "how long until the panel is right again"; the others
- * are the last measured values of work that happens on every interaction.
+ * Phases of a preset switch, in the order the user experiences them. `apply` and
+ * `replay` are rendered with their detail; `numbers` is the one that answers
+ * "how long until the panel is right again"; the rest are the last measured
+ * values of work that happens on every interaction.
  */
 const TIMING_SPANS = Object.freeze([
-    ['presetApply', 'apply'],
-    ['presetReplay', 'replay'],
     ['panelSync', 'panel'],
     ['recount', 'recount'],
     ['tokenCount', 'token api'],
@@ -114,7 +113,7 @@ export function createSettingsPanel({ context, settings, runtime, diagnostics, i
             `last panel sync: ${formatStats(snapshot.panel)}`,
             `pending recount: ${scheduler.dirty || scheduler.running ? 'yes' : 'no'}${scheduler.lastRun ? ` (last finished ${new Date(scheduler.lastRun).toLocaleTimeString()})` : ''}`,
         );
-        const timing = formatTiming(snapshot.metrics?.spans ?? {});
+        const timing = formatTiming(snapshot.metrics?.spans ?? {}, snapshot.presetWindow ?? {});
         if (timing) {
             lines.push(timing);
         }
@@ -142,19 +141,52 @@ export function createSettingsPanel({ context, settings, runtime, diagnostics, i
 
     /**
      * Renders the measured phases of the last preset switch, skipping phases that
-     * have not happened yet.
+     * have not happened yet. The apply phase is split into the field loop and the
+     * chain that follows it, and the replay reports how many fields the preset did
+     * not move (and how many redundant `change` triggers were dropped).
      *
      * @param {Record<string, { lastMs?: number }>} spans
+     * @param {{ lastUnchanged?: number, lastRedundantChanges?: number }} window
      * @returns {string}
      */
-    function formatTiming(spans) {
+    function formatTiming(spans, window) {
+        /**
+         * @param {string} label
+         * @returns {number | null}
+         */
+        function lastMs(label) {
+            const value = spans?.[label]?.lastMs;
+            return typeof value === 'number' && Number.isFinite(value) ? value : null;
+        }
+
         const parts = [];
+        const apply = lastMs('presetApply');
+        if (apply !== null) {
+            const fields = lastMs('presetApplyFields');
+            const chain = lastMs('presetApplyChain');
+            const detail = fields !== null && chain !== null
+                ? ` [fields ${Math.round(fields)} · chain ${Math.round(chain)}]`
+                : '';
+            parts.push(`apply ${Math.round(apply)}ms${detail}`);
+        }
+        const replay = lastMs('presetReplay');
+        if (replay !== null) {
+            const notes = [];
+            if (Number(window?.lastUnchanged) > 0) {
+                notes.push(`${window.lastUnchanged} unchanged`);
+            }
+            if (Number(window?.lastRedundantChanges) > 0) {
+                notes.push(`${window.lastRedundantChanges} redundant change`);
+            }
+            const detail = notes.length > 0 ? ` [${notes.join(' · ')}]` : '';
+            parts.push(`replay ${Math.round(replay)}ms${detail}`);
+        }
         for (const [label, text] of TIMING_SPANS) {
-            const lastMs = spans?.[label]?.lastMs;
-            if (typeof lastMs !== 'number' || !Number.isFinite(lastMs)) {
+            const value = lastMs(label);
+            if (value === null) {
                 continue;
             }
-            parts.push(`${text} ${Math.round(lastMs)}ms`);
+            parts.push(`${text} ${Math.round(value)}ms`);
         }
         return parts.length > 0 ? `timing: ${parts.join(' · ')}` : '';
     }
