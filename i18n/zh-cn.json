@@ -17,5 +17,9 @@
     "Clear token cache": "清空 token 缓存",
     "Copy report": "复制报告",
     "Enable perf HUD": "开启性能 HUD",
-    "The prompt/preset panel is rendered incrementally by Preset Lite.": "提示词/预设面板当前由预设轻量化插件进行增量渲染。"
+    "The prompt/preset panel is rendered incrementally by Preset Lite.": "提示词/预设面板当前由预设轻量化插件进行增量渲染。",
+    "Let the perf HUD ignore touches": "让性能 HUD 不遮挡触摸",
+    "The host performance HUD is a fixed overlay that covers whatever is behind it. With this on, only its drag header reacts to touches, so the covered area stays usable.": "宿主性能 HUD 是固定悬浮层，会遮住它下面的区域。开启后只有它顶部那一行拖拽条响应触摸，被覆盖的区域恢复可用。",
+    "Disable perf HUD": "关闭性能 HUD",
+    "The benchmark drives the real panel: 60 prompt toggles, preset switches and a 2 s scroll, once with Preset Lite off (baseline) and once on. Keep the AI Response Configuration panel open and watch it work; it takes about a minute.": "压测会真实驱动面板：60 次提示词开关、若干次预设切换、2 秒滚动，先关插件跑一遍（基线）再开插件跑一遍。请保持左栏「AI 响应配置」面板打开并观察，整个过程约一分钟。"
 }

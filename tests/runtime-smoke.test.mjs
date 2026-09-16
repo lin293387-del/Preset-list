@@ -425,6 +425,29 @@ describe('runtime smoke test', { skip: Window ? false : 'happy-dom is not instal
         }
     });
 
+    test('the perf HUD passthrough class follows the setting and the master switch', async () => {
+        const { runtime, settings } = await bootRuntime();
+
+        try {
+            assert.equal(document.body.classList.contains('tt-pl-hud-passthrough'), true, 'enabled by default');
+
+            settings.update({ hudPassthrough: false });
+            assert.equal(document.body.classList.contains('tt-pl-hud-passthrough'), false);
+
+            settings.update({ hudPassthrough: true });
+            assert.equal(document.body.classList.contains('tt-pl-hud-passthrough'), true);
+
+            settings.update({ enabled: false });
+            assert.equal(
+                document.body.classList.contains('tt-pl-hud-passthrough'),
+                false,
+                'the master switch wins over the HUD option',
+            );
+        } finally {
+            runtime.stop();
+        }
+    });
+
     test('stop restores the upstream prototype and removes listeners', async () => {
         const { runtime, app, instance, PromptManager, openai } = await bootRuntime();
         const prototypeRender = PromptManager.prototype.render;

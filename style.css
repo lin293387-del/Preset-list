@@ -6,11 +6,38 @@
  * without a reload.
  */
 
+/*
+ * The host HUD is `position: fixed` with an inline `pointer-events: auto` and a
+ * maximal z-index, so it used to swallow every touch in the rectangle it covers.
+ * The panel stays readable, but only its drag header accepts input; the rest of
+ * the area is transparent to touches again.
+ */
+body.tt-pl-hud-passthrough #tauritavern-perf-hud {
+    pointer-events: none !important;
+}
+
+body.tt-pl-hud-passthrough #tauritavern-perf-hud > div:first-child {
+    pointer-events: auto !important;
+}
+
+/* Keep this settings block inside the viewport on narrow screens. */
+body.tt-pl-on .preset-lite-settings,
+body.tt-pl-on .preset-lite-settings .inline-drawer-content {
+    max-width: 100%;
+    min-width: 0;
+}
+
 body.tt-pl-on .preset-lite-settings .preset-lite-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 0.5em;
     margin: 0.5em 0;
+}
+
+@media (max-width: 480px) {
+    body.tt-pl-on .preset-lite-settings .preset-lite-grid {
+        grid-template-columns: 1fr;
+    }
 }
 
 body.tt-pl-on .preset-lite-settings .preset-lite-grid label {
@@ -23,6 +50,31 @@ body.tt-pl-on .preset-lite-settings .preset-lite-buttons {
     flex-wrap: wrap;
     gap: 0.25em;
     margin-top: 0.5em;
+}
+
+/*
+ * Upstream styles `.toggle-description` with `width: max-content`, which sizes the
+ * box to its longest line and pushes long helper texts off narrow screens. Inside
+ * this block the text wraps instead.
+ */
+body.tt-pl-on .preset-lite-settings .toggle-description {
+    width: auto;
+    max-width: 100%;
+    margin-right: 0;
+    text-align: left;
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
+body.tt-pl-on .preset-lite-settings .checkbox_label {
+    flex-wrap: wrap;
+    min-width: 0;
+    align-items: center;
+}
+
+body.tt-pl-on .preset-lite-settings .checkbox_label > span {
+    min-width: 0;
+    overflow-wrap: anywhere;
 }
 
 body.tt-pl-on .preset-lite-settings .preset-lite-bench {

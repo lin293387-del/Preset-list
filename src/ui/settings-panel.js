@@ -12,6 +12,7 @@ const STATUS_INTERVAL_MS = 1000;
 
 const CONTROLS = Object.freeze({
     enabled: 'preset_lite_enabled',
+    hudPassthrough: 'preset_lite_hud_passthrough',
     keepStaleNumbers: 'preset_lite_keep_stale',
     coalescePresetEvents: 'preset_lite_coalesce',
     reportPresetConflicts: 'preset_lite_report_conflicts',
@@ -281,14 +282,62 @@ export function createSettingsPanel({ context, settings, runtime, diagnostics, i
         });
 
         document.getElementById('preset_lite_enable_hud')?.addEventListener('click', () => {
-            try {
-                globalThis.localStorage?.setItem('tt:perf', '1');
-                pushBenchMessage('perf HUD enabled; restart the app and press Ctrl+Alt+P');
-            } catch (error) {
-                diagnostics.warn('Could not enable the perf HUD:', error);
-                pushBenchMessage('could not write the perf HUD flag');
-            }
+            setHudEnabled(!isHudEnabled());
         });
+    }
+
+    /** @returns {boolean} Whether the host perf HUD was requested for this install. */
+    function isHudEnabled() {
+        try {
+            return globalThis.localStorage?.getItem('tt:perf') === '1';
+        } catch {
+            return false;
+        }
+    }
+
+    function refreshHudButton() {
+        const button = document.getElementById('preset_lite_enable_hud');
+        if (!button) {
+            return;
+        }
+        const forced = typeof globalThis.__TAURITAVERN_PERF_ENABLED__ === 'boolean';
+        const on = forced || isHudEnabled();
+        button.textContent = on ? 'Disable perf HUD' : 'Enable perf HUD';
+        button.setAttribute('data-i18n', on ? 'Disable perf HUD' : 'Enable perf HUD');
+        button.title = forced
+            ? 'The perf HUD is forced on by the runtime flag of this build'
+            : (on ? 'Turn the perf HUD off (restart required)' : 'Turn the perf HUD on (restart required)');
+    }
+
+    /**
+     * @param {boolean} enable
+     */
+    function setHudEnabled(enable) {
+        if (typeof globalThis.__TAURITAVERN_PERF_ENABLED__ === 'boolean') {
+            pushBenchMessage('the perf HUD is forced on by the runtime flag of this build');
+            return;
+        }
+        try {
+            globalThis.localStorage?.setItem('tt:perf', enable ? '1' : '0');
+        } catch (error) {
+            diagnostics.warn('Could not write the perf HUD flag:', error);
+            pushBenchMessage('could not write the perf HUD flag');
+            return;
+        }
+
+        if (!enable) {
+            // The flag only affects the next start, so hide the live HUD too.
+            try {
+                globalThis.__TAURITAVERN_PERF__?.disable?.();
+            } catch (error) {
+                diagnostics.warn('Could not hide the live perf HUD:', error);
+            }
+        }
+
+        refreshHudButton();
+        pushBenchMessage(enable
+            ? 'perf HUD enabled; restart the app (Ctrl+Alt+P toggles it live)'
+            : 'perf HUD disabled; it stays hidden after the next restart');
     }
 
     return {
@@ -314,6 +363,7 @@ export function createSettingsPanel({ context, settings, runtime, diagnostics, i
 
             syncControlsFromSettings();
             wireControls();
+            refreshHudButton();
             unsubscribeSettings = settings.subscribe(() => {
                 syncControlsFromSettings();
                 refreshStatus();

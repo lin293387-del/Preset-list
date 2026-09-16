@@ -65,9 +65,12 @@ Uninstall = disable or delete the extension; no data outside the extension store
 | Recount delay (ms) | 250 | Quiet time after the last panel interaction before a recount may start. |
 | Token cache entries | 4000 | LRU bound. |
 | Verbose diagnostics | off | Console logging plus the diagnostics list. |
+| Let the perf HUD ignore touches | on | The host HUD is a fixed overlay; with this on only its drag header accepts input, so the area it covers stays usable. |
 
-Buttons: **Run benchmark**, **Clear token cache**, **Copy report**, **Enable perf HUD** (writes the
-host flag `tt:perf=1`; the HUD appears after a restart, `Ctrl+Alt+P`).
+Buttons: **Run benchmark**, **Clear token cache**, **Copy report**, **Enable/Disable perf HUD**
+(toggles the host flag `tt:perf`; the HUD appears or disappears after a restart, `Ctrl+Alt+P` toggles
+it live). Benchmark progress is appended to a timestamped log that the periodic status line cannot
+overwrite, and mirrored to the DevTools console.
 
 Runtime API for the console:
 

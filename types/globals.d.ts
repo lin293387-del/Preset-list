@@ -8,7 +8,14 @@
 declare global {
     var __TAURITAVERN__: { ready?: Promise<unknown>; api?: { extension?: { store?: any } } } | undefined;
     var __TAURITAVERN_MAIN_READY__: Promise<unknown> | undefined;
-    var __TAURITAVERN_PERF__: { snapshot?: () => unknown } | undefined;
+    var __TAURITAVERN_PERF__: {
+        snapshot?: () => unknown;
+        enable?: () => void;
+        disable?: () => void;
+        toggle?: () => void;
+    } | undefined;
+    /** Set by builds that force the perf HUD regardless of localStorage. */
+    var __TAURITAVERN_PERF_ENABLED__: boolean | undefined;
     var requestIdleCallback: ((callback: () => void, options?: { timeout?: number }) => number) | undefined;
     var cancelIdleCallback: ((handle: number) => void) | undefined;
 }
