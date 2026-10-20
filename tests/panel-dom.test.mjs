@@ -390,7 +390,7 @@ describe('panel DOM integration', { skip: Window ? false : 'happy-dom is not ins
         assert.deepEqual(rowsDuringRender, [3], 'the previous rows stay in the list while the new markup is built');
     });
 
-    test('a structural rebuild keeps the scroll offset and the row nodes', async () => {
+    test('a structural rebuild keeps the scroll offset and reuses the unchanged rows', async () => {
         const prompts = defaultPrompts();
         const enabled = new Map(prompts.map(p => [p.identifier, true]));
         const harness = createFixture({ prompts, enabledMap: enabled, counts: { main: 12, chatHistory: 345, worldInfoBefore: 7 } });
@@ -406,9 +406,14 @@ describe('panel DOM integration', { skip: Window ? false : 'happy-dom is not ins
 
         const rebuiltList = harness.context.instance.containerElement.querySelector(`#${PREFIX}prompt_manager_list`);
         assert.equal(scroller.value, 240, 'the scroll offset must survive the rebuild');
-        nodes.forEach((node, key) => {
-            assert.equal(rebuiltList.querySelector(`li[data-pm-identifier="${key}"]`), node, `${key} node must be reused`);
-        });
+        // Only the renamed row has different markup; the rest is reused, so a
+        // structural rebuild costs one row instead of the whole list.
+        assert.notEqual(rebuiltList.querySelector('li[data-pm-identifier="main"]'), nodes.get('main'));
+        for (const key of ['chatHistory', 'worldInfoBefore']) {
+            assert.equal(rebuiltList.querySelector(`li[data-pm-identifier="${key}"]`), nodes.get(key), `${key} node must be reused`);
+        }
+        assert.equal(harness.context.state.lastStats.updated, 1);
+        assert.equal(harness.context.state.lastStats.created, 0);
     });
 
     test('a changed row is replaced without losing the scroll offset', async () => {
