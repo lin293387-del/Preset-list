@@ -94,8 +94,14 @@ function findScroller(element) {
  * stay collapsed: the panel jumped back to the top of the prompt list after a
  * delete or a duplicate.
  *
+ * Checking the offset afterwards is not free: reading `scrollTop` after the sync
+ * wrote to the DOM forces a synchronous layout of every row, which a CPU profile
+ * charges to that read and which showed up as the single most expensive line in
+ * the render path. A sync that only rewrote token cells cannot shrink the list, so
+ * it asks for no check at all and keeps the layout out of the blocking window.
+ *
  * @param {HTMLElement | null | undefined} element
- * @returns {{ end: () => void }}
+ * @returns {{ end: (rowsTouched?: boolean) => void }}
  */
 function preserveScroll(element) {
     const scroller = findScroller(element);
@@ -104,7 +110,11 @@ function preserveScroll(element) {
     }
     const top = scroller.scrollTop;
     return {
-        end() {
+        /** @param {boolean} [rowsTouched] */
+        end(rowsTouched = true) {
+            if (!rowsTouched) {
+                return;
+            }
             if (scroller.scrollTop !== top) {
                 scroller.scrollTop = top;
             }
@@ -1197,6 +1207,9 @@ async function syncPanelNow(context) {
         || state.structureSignature !== structureSignature(instance);
 
     const scroll = preserveScroll(container);
+    // Whether the row set itself moves. Only then can the scroller clamp its
+    // offset, and only then is restoring it worth a forced layout.
+    let rowsTouched = needsStructure;
     try {
         if (needsStructure) {
             await rebuildStructure(context);
@@ -1227,6 +1240,7 @@ async function syncPanelNow(context) {
                 : { path: /** @type {'full'} */ ('full'), keys: modelKeys };
 
         if (delta) {
+            rowsTouched = true;
             await syncStructuralDelta(context, delta, modelKeys);
             // Only the inserted rows are new; the survivors kept their
             // fingerprints and the departed ones were dropped with their nodes.
@@ -1237,6 +1251,8 @@ async function syncPanelNow(context) {
         } else {
             const keys = decision.path === 'local' ? locallyRenderableKeys(state, decision.keys) : [];
             const narrowed = keys.length > 0 && keys.length < modelKeys.length ? keys : null;
+            // 'local' and 'full' both hand rows to the DOM layer.
+            rowsTouched = true;
             await syncRows(context, narrowed);
             renderedKeys = narrowed;
         }
@@ -1254,7 +1270,7 @@ async function syncPanelNow(context) {
         // The sync may have emptied the list while it built the new markup, which
         // makes the browser clamp the offset to the top. Restore it here instead of
         // letting the panel jump away from the row the user just touched.
-        scroll.end();
+        scroll.end(rowsTouched);
     }
 }
 
