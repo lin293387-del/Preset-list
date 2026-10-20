@@ -49,25 +49,47 @@ export function createPanelState() {
 }
 
 /**
- * @param {HTMLElement} element
- * @returns {number | null}
+ * Finds the element that actually scrolls the prompt panel.
+ *
+ * Upstream reads and restores the offset through `.scrollableInner` as well, so
+ * the same ancestor is used here.
+ *
+ * @param {HTMLElement | null | undefined} element
+ * @returns {HTMLElement | null}
  */
-function getScrollTop(element) {
-    const scroller = element.closest('.scrollableInner') ?? element.parentElement?.closest?.('.scrollableInner') ?? null;
-    return scroller ? scroller.scrollTop : null;
+function findScroller(element) {
+    if (!(element instanceof HTMLElement)) {
+        return null;
+    }
+    return element.closest('.scrollableInner') ?? element.parentElement?.closest?.('.scrollableInner') ?? null;
 }
 
 /**
- * @param {HTMLElement} element
- * @param {number} value
+ * Keeps the panel's scroll offset across one DOM update.
+ *
+ * The browser clamps `scrollTop` whenever the scrolled content shrinks — an
+ * emptied list collapses the container and the offset is rewritten to 0. Upstream
+ * restores its own offset around *its* render, but this extension's render is
+ * asynchronous and runs after that restore, so anything the sync collapses would
+ * stay collapsed: the panel jumped back to the top of the prompt list after a
+ * delete or a duplicate.
+ *
+ * @param {HTMLElement | null | undefined} element
+ * @returns {{ end: () => void }}
  */
-function setScrollTop(element, value) {
-    const scroller = element.closest('.scrollableInner')
-        ?? element.parentElement?.closest?.('.scrollableInner')
-        ?? null;
-    if (scroller) {
-        scroller.scrollTop = value;
+function preserveScroll(element) {
+    const scroller = findScroller(element);
+    if (!scroller) {
+        return { end() {} };
     }
+    const top = scroller.scrollTop;
+    return {
+        end() {
+            if (scroller.scrollTop !== top) {
+                scroller.scrollTop = top;
+            }
+        },
+    };
 }
 
 /**
@@ -481,13 +503,21 @@ async function syncPanelNow(context) {
         || state.errorSignature !== instance.error
         || state.structureSignature !== structureSignature(instance);
 
-    if (needsStructure) {
-        await rebuildStructure(context);
-    }
+    const scroll = preserveScroll(container);
+    try {
+        if (needsStructure) {
+            await rebuildStructure(context);
+        }
 
-    await syncRows(context);
-    updateTotal(context);
-    applyStalePresentation(context);
+        await syncRows(context);
+        updateTotal(context);
+        applyStalePresentation(context);
+    } finally {
+        // The sync may have emptied the list while it built the new markup, which
+        // makes the browser clamp the offset to the top. Restore it here instead of
+        // letting the panel jump away from the row the user just touched.
+        scroll.end();
+    }
 }
 
 /**
@@ -531,18 +561,19 @@ export function syncPanel(context) {
 export async function fullRebuild(context) {
     const { instance, originals, state } = context;
     // The stock renderer rebuilds every row, so only the scroll offset is worth
-    // carrying across: an empty list collapses the scroller to its top.
-    const scrollTop = getScrollTop(instance.containerElement);
+    // carrying across: an emptied list collapses the scroller to its top.
+    const scroll = preserveScroll(instance.containerElement);
     state.listElement = null;
     state.nodeByKey = new Map();
     state.previousByKey = new Map();
     state.structureSignature = null;
     state.errorSignature = undefined;
     state.placeholderApplied = false;
-    await originals.renderPromptManager.call(instance);
-    await originals.renderPromptManagerListItems.call(instance);
-    instance.makeDraggable();
-    if (scrollTop !== null) {
-        setScrollTop(instance.containerElement, scrollTop);
+    try {
+        await originals.renderPromptManager.call(instance);
+        await originals.renderPromptManagerListItems.call(instance);
+        instance.makeDraggable();
+    } finally {
+        scroll.end();
     }
 }

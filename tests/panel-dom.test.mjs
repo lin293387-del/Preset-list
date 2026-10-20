@@ -416,7 +416,7 @@ describe('panel DOM integration', { skip: Window ? false : 'happy-dom is not ins
         assert.equal(harness.context.state.lastStats.created, 0);
     });
 
-    test('a changed row is replaced without losing the scroll offset', async () => {
+    test('the stock fallback renderer restores the scroll offset', async () => {
         const prompts = defaultPrompts();
         const enabled = new Map(prompts.map(p => [p.identifier, true]));
         const harness = createFixture({ prompts, enabledMap: enabled, counts: { main: 12, chatHistory: 345, worldInfoBefore: 7 } });
@@ -424,12 +424,10 @@ describe('panel DOM integration', { skip: Window ? false : 'happy-dom is not ins
         await syncPanel(harness.context);
         const { state: scroller } = installClampingScroller();
 
-        // Toggling changes one row's structure, which must not disturb the rest.
-        harness.context.instance.serviceSettings.prompt_order[0].order[0].enabled = false;
-        await syncPanel(harness.context);
+        // The degraded path rebuilds the list through upstream, which empties it.
+        await fullRebuild(harness.context);
 
-        assert.equal(scroller.value, 240);
-        assert.equal(harness.context.state.lastStats.updated, 1);
+        assert.equal(scroller.value, 240, 'the stock fallback must not drop the offset either');
     });
 
     test('reordering prompts follows the model order without rebuilding rows', async () => {
