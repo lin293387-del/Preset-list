@@ -163,3 +163,46 @@ body.tt-to-on.tt-to-mobile #chat {
 body.tt-to-on.tt-to-mobile .avatar img {
     box-shadow: none !important;
 }
+
+/*
+ * A large blur shadow is a per-frame rasterisation of the whole element behind it,
+ * and the surfaces below sit on top of the chat, so they are repainted with it. The
+ * shadow is replaced by a hairline drawn inside the element's own box: an `outline`
+ * with a negative offset paints the same edge without the shadow, and without the
+ * layout shift a real `border` would cause.
+ */
+body.tt-to-on.tt-to-mobile #top-bar,
+body.tt-to-on.tt-to-mobile #send_form,
+body.tt-to-on.tt-to-mobile .popup .popper-modal,
+body.tt-to-on.tt-to-mobile #shadow_popup,
+body.tt-to-on.tt-to-mobile #shadow_character_popup,
+body.tt-to-on.tt-to-mobile #character_popup {
+    box-shadow: none !important;
+    /* Two declarations on purpose: a WebView that does not know `color-mix` keeps
+       the plain hairline instead of losing the edge entirely. */
+    outline: 1px solid rgba(255, 255, 255, 0.18);
+    outline: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+    outline-offset: -1px;
+}
+
+/*
+ * Only compositor-friendly properties may animate on these surfaces. A transition
+ * on `box-shadow`, `filter`, `background` or `width` runs on the main thread and
+ * re-rasterises the element on every frame of the animation — which is exactly when
+ * the user is watching. `transform` and `opacity` are handed to the compositor and
+ * cost the main thread nothing.
+ *
+ * `transition-property` does not inherit, so the chat's own rows are listed too.
+ */
+body.tt-to-on.tt-to-mobile #top-bar,
+body.tt-to-on.tt-to-mobile #chat,
+body.tt-to-on.tt-to-mobile #chat .mes,
+body.tt-to-on.tt-to-mobile #send_form,
+body.tt-to-on.tt-to-mobile .popup .popper-modal,
+body.tt-to-on.tt-to-mobile .autoComplete-details,
+body.tt-to-on.tt-to-mobile .tt-chat-input-editor,
+body.tt-to-on.tt-to-mobile #shadow_popup,
+body.tt-to-on.tt-to-mobile #shadow_character_popup,
+body.tt-to-on.tt-to-mobile #character_popup {
+    transition-property: transform, opacity !important;
+}
