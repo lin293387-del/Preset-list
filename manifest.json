@@ -11,7 +11,7 @@
     "author": "lin293387-del",
     "version": "0.2.0",
     "description": "Tavern Optimize: incremental prompt-row rendering, idle token recounts and coalesced preset apply events for the chat-completion preset panel.",
-    "homePage": "https://github.com/lin293387-del/Preset-list",
+    "homePage": "https://github.com/lin293387-del/Tavern-Optimize",
     "hooks": {
         "activate": "init"
     }

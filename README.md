@@ -73,7 +73,7 @@ it was 1552 px at 200 rows, which is exactly the "blank flash then jump" users r
 Through the extension installer (recommended, updatable):
 
 ```
-https://github.com/lin293387-del/Preset-list
+https://github.com/lin293387-del/Tavern-Optimize
 ```
 
 Or manually: copy this folder to `<data_root>/default-user/extensions/Tavern-Optimize/` (local) or
@@ -244,7 +244,7 @@ MIT — see [LICENSE](LICENSE).
 把 token 重算从交互路径挪到空闲时执行（先出画面，算完原地写回数字），并合并预设切换产生的上百次
 `input` 事件。**不改任何应用源码**，关掉开关就立刻回到原生行为。
 
-**装**：在扩展安装器里填 `https://github.com/lin293387-del/Preset-list`，或把整个文件夹放进
+**装**：在扩展安装器里填 `https://github.com/lin293387-del/Tavern-Optimize`，或把整个文件夹放进
 `<数据目录>/default-user/extensions/Tavern-Optimize/`，然后在扩展列表里启用。
 
 **验证**：打开左栏「AI 响应配置」面板，交互结束后 token 数字应在一个空闲窗口内刷新成真实值；
