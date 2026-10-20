@@ -521,16 +521,15 @@ function rowGlobals(instance) {
  * render returns `null`: upstream may have started reading a field this
  * fingerprint does not know about, and only a full rebuild is safe then.
  *
- * @param {any} instance
  * @param {any} prompt
- * @param {string} globals
+ * @param {string} globals Instance-wide fingerprint from `rowGlobals`.
+ * @param {any} entry The prompt's order entry, from `createLookups`.
  * @returns {string | null}
  */
-function rowSignature(instance, prompt, globals) {
+function rowSignature(prompt, globals, entry) {
     if (!prompt) {
         return null;
     }
-    const entry = instance.getPromptOrderEntry?.(instance.activeCharacter, prompt.identifier);
     const position = typeof prompt.injection_position === 'number' ? prompt.injection_position : 0;
     return [
         globals,
@@ -567,6 +566,7 @@ function promptShape(prompt) {
 function captureRowSignatures(context) {
     const { instance, state } = context;
     const globals = rowGlobals(instance);
+    const lookups = createLookups(instance);
     state.rowGlobals = globals;
     state.rowSignatures = new Map();
     let prompts;
@@ -583,9 +583,60 @@ function captureRowSignatures(context) {
             continue;
         }
         const key = String(prompt.identifier);
-        const signature = rowSignature(instance, prompt, globals);
+        const signature = rowSignature(prompt, globals, lookups.order.get(key) ?? null);
         state.rowSignatures.set(key, signature === null ? null : `${signature}\u0003${promptShape(prompt)}`);
     }
+}
+
+/**
+ * Per-sync lookup tables for the two upstream accessors the render path needs.
+ *
+ * Both are linear searches over the whole list — `PromptManager.getPromptById`
+ * is a `find` over `serviceSettings.prompts`, `getPromptOrderEntry` a `find`
+ * over the character's order. Asking them once per row makes a sync quadratic:
+ * 200 prompts cost about 80k comparisons per pass, and a sync makes two passes.
+ * Built once per sync, the same questions become hash lookups.
+ *
+ * `find` semantics are preserved: the first match wins.
+ *
+ * @param {any} instance
+ * @returns {{ prompts: Map<string, any>, order: Map<string, any> }}
+ */
+function createLookups(instance) {
+    const prompts = new Map();
+    const list = instance?.serviceSettings?.prompts;
+    if (Array.isArray(list)) {
+        for (const prompt of list) {
+            if (!prompt || prompt.identifier === undefined || prompt.identifier === null) {
+                continue;
+            }
+            const key = String(prompt.identifier);
+            if (!prompts.has(key)) {
+                prompts.set(key, prompt);
+            }
+        }
+    }
+
+    const order = new Map();
+    let entries = [];
+    try {
+        entries = instance?.getPromptOrderForCharacter?.(instance.activeCharacter) ?? [];
+    } catch {
+        entries = [];
+    }
+    if (Array.isArray(entries)) {
+        for (const entry of entries) {
+            if (!entry || entry.identifier === undefined || entry.identifier === null) {
+                continue;
+            }
+            const key = String(entry.identifier);
+            if (!order.has(key)) {
+                order.set(key, entry);
+            }
+        }
+    }
+
+    return { prompts, order };
 }
 
 /**
@@ -885,9 +936,10 @@ function choosePath(context, modelKeys) {
         return { path: 'full', keys: modelKeys };
     }
 
+    const lookups = createLookups(instance);
     const changed = modelKeys.filter(key => {
-        const prompt = instance.getPromptById?.(key);
-        const signature = rowSignature(instance, prompt, globals);
+        const prompt = lookups.prompts.get(key) ?? null;
+        const signature = rowSignature(prompt, globals, lookups.order.get(key) ?? null);
         const stored = state.rowSignatures.get(key);
         if (signature === null || stored === undefined) {
             return true;
@@ -988,12 +1040,13 @@ function planStructuralDelta(context, modelKeys) {
         return null;
     }
 
+    const lookups = createLookups(instance);
     for (const key of modelKeys) {
         if (!known.has(key)) {
             continue;
         }
-        const prompt = instance.getPromptById?.(key);
-        const signature = rowSignature(instance, prompt, globals);
+        const prompt = lookups.prompts.get(key) ?? null;
+        const signature = rowSignature(prompt, globals, lookups.order.get(key) ?? null);
         const stored = state.rowSignatures.get(key);
         if (signature === null || stored === undefined) {
             return null;
