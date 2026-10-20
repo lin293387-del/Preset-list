@@ -1,6 +1,6 @@
 // @ts-check
 /**
- * Preset Lite — TauriTavern third-party extension entry point.
+ * Tavern Optimize — TauriTavern third-party extension entry point.
  *
  * The extension takes over the chat-completion preset/prompt panel at runtime:
  * rows are reconciled instead of rebuilt, token recounts move out of the
@@ -60,7 +60,7 @@ export async function init() {
 
         const activeRuntime = runtime;
 
-        globalThis.__PRESET_LITE__ = {
+        globalThis.__TAVERN_OPTIMIZE__ = {
             version: VERSION,
             folder: identity.folder,
             get enabled() {
@@ -75,18 +75,18 @@ export async function init() {
             stop: () => activeRuntime.stop(),
         };
 
-        diagnostics.info(`Preset Lite ready (${identity.name})`);
+        diagnostics.info(`Tavern Optimize ready (${identity.name})`);
     } catch (error) {
         booted = false;
         try {
             runtime?.stop();
         } catch (stopError) {
-            console.error('[Preset Lite] Cleanup after a failed start also failed:', stopError);
+            console.error('[Tavern Optimize] Cleanup after a failed start also failed:', stopError);
         }
-        console.error('[Preset Lite] Initialization failed; the panel keeps stock behaviour:', error);
+        console.error('[Tavern Optimize] Initialization failed; the panel keeps stock behaviour:', error);
         throw error;
     }
 }
 
 /** Allows a manual re-activation from the console after a failed boot. */
-globalThis.__PRESET_LITE_RETRY__ = () => init();
+globalThis.__TAVERN_OPTIMIZE_RETRY__ = () => init();

@@ -1,5 +1,5 @@
 {
-    "display_name": "Preset Lite",
+    "display_name": "Tavern Optimize",
     "loading_order": 10,
     "requires": [],
     "optional": [],
@@ -9,9 +9,9 @@
         "zh-cn": "i18n/zh-cn.json"
     },
     "author": "lin293387-del",
-    "version": "0.1.10",
-    "description": "Keeps the chat-completion preset and prompt panel light: incremental row rendering, idle token recounts, preset event coalescing.",
-    "homePage": "https://github.com/lin293387-del/Preset-list",
+    "version": "0.2.0",
+    "description": "Tavern Optimize: incremental prompt-row rendering, idle token recounts and coalesced preset apply events for the chat-completion preset panel.",
+    "homePage": "https://github.com/lin293387-del/Tavern-Optimize",
     "hooks": {
         "activate": "init"
     }

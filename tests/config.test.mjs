@@ -8,7 +8,7 @@ import { DEFAULT_SETTINGS, createSettings } from '../src/config.js';
  */
 function createHarness(stored) {
     const context = {
-        extensionSettings: stored ? { 'preset-lite': stored } : {},
+        extensionSettings: stored ? { 'tavern-optimize': stored } : {},
         saveCalls: 0,
         saveSettingsDebounced() {
             this.saveCalls += 1;
@@ -22,7 +22,7 @@ test('defaults are used when nothing is stored yet', () => {
 
     assert.equal(settings.get().enabled, DEFAULT_SETTINGS.enabled);
     assert.equal(settings.get().idleDelayMs, 100, 'the default recount delay stays at 100 ms');
-    assert.deepEqual(context.extensionSettings['preset-lite'], { ...DEFAULT_SETTINGS });
+    assert.deepEqual(context.extensionSettings['tavern-optimize'], { ...DEFAULT_SETTINGS });
 });
 
 test('stored values are coerced and clamped, unknown keys are dropped', () => {
@@ -59,4 +59,19 @@ test('updates persist once and notify subscribers only on real changes', () => {
     unsubscribe();
     settings.update({ enabled: true });
     assert.equal(notifications, 2, 'unsubscribed listeners are not called');
+});
+
+test('settings stored under the pre-rename namespace are adopted, not discarded', () => {
+    const context = {
+        extensionSettings: { 'preset-lite': { idleDelayMs: 750, coalescePresetEvents: false } },
+        saveCalls: 0,
+        saveSettingsDebounced() {
+            this.saveCalls += 1;
+        },
+    };
+    const settings = createSettings(context);
+
+    assert.equal(settings.get().idleDelayMs, 750, 'a configured delay survives the rename');
+    assert.equal(settings.get().coalescePresetEvents, false);
+    assert.deepEqual(context.extensionSettings['tavern-optimize'], settings.get(), 'state now lives under the new namespace');
 });

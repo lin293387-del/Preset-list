@@ -9,11 +9,31 @@
 
 import { getContext as getPageContext } from '/scripts/extensions.js';
 
+/**
+ * True on the Android/iOS builds of TauriTavern.
+ *
+ * The paint-degradation layer is mobile-only on purpose: a desktop GPU rasterises
+ * the backdrop blur and the shadow halos cheaply, so degrading them there would
+ * spend looks for no measurable gain. TauriTavern publishes the host identity as
+ * `{ platform, kind }` before extensions activate; a missing or malformed
+ * identity is treated as "not mobile" and reported by the caller instead of
+ * being guessed.
+ *
+ * @returns {boolean}
+ */
+export function isMobileHost() {
+    const identity = globalThis.__TAURITAVERN_HOST__;
+    if (!identity || typeof identity !== 'object') {
+        return false;
+    }
+    return identity.kind === 'mobile';
+}
+
 /** @returns {Record<string, any>} The SillyTavern/TauriTavern page context. */
 export function getContext() {
     const context = getPageContext();
     if (!context || typeof context !== 'object') {
-        throw new Error('[Preset Lite] SillyTavern context is unavailable');
+        throw new Error('[Tavern Optimize] SillyTavern context is unavailable');
     }
     return context;
 }
@@ -65,7 +85,7 @@ export function resolveExtensionIdentity(moduleUrl) {
     const resourceRoot = new URL('./', moduleUrl);
     const match = /^\/scripts\/extensions\/(.+)\/$/.exec(resourceRoot.pathname);
     if (!match) {
-        throw new Error(`[Preset Lite] Unexpected extension location: ${resourceRoot.pathname}`);
+        throw new Error(`[Tavern Optimize] Unexpected extension location: ${resourceRoot.pathname}`);
     }
 
     const name = match[1];

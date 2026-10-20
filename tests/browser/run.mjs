@@ -81,6 +81,8 @@ async function run() {
     /** @type {string[]} */
     const pageErrors = [];
     const results = [];
+    /** Medians of the interaction scenarios only — the number a sync costs. */
+    const panelMedians = [];
     /** @type {string[]} */
     const failures = [];
 
@@ -169,12 +171,25 @@ async function run() {
                 };
             `);
             results.push({ name, ...outcome });
+            panelMedians.push(outcome.median);
             const line = `${name.padEnd(46)} median ${outcome.median.toFixed(1).padStart(7)} ms  p95 ${outcome.p95.toFixed(1).padStart(7)} ms  frames ${String(outcome.frames).padStart(4)}  >50ms ${String(outcome.longFrames).padStart(3)}  path=${outcome.path}`;
             console.log(line);
             return outcome;
         };
 
         console.log(`\nrows=${ROWS} repeats=${REPEATS} chromium=${chrome}\n`);
+
+        // Calibration first, while the page is idle: the panel scenarios below are
+        // one-shot operations whose absolute cost follows the device, this fixed
+        // workload follows it too, and the ratio does not.
+        const calibration = await evaluate(`
+            let best = Infinity;
+            for (let round = 0; round < 3; round += 1) {
+                best = Math.min(best, window.__harness.calibrate());
+            }
+            return best;
+        `);
+        console.log(`calibration (fixed workload, min of 3) ${calibration.toFixed(1)} ms`);
 
         // The steady state has to be free: a no-op sync must not touch upstream.
         await scenario('idle sync (no change)', 'await window.__harness.sync();');
@@ -379,6 +394,66 @@ async function run() {
         console.log(`\nquiet fling (${quiet.requests} sync requests while flinging)  writes during gesture ${quiet.duringGesture.duringGesture} / ${quiet.duringGesture.total}  deferred=${quiet.gate.deferred}  rows ${quiet.rowsAfter}`);
         results.push({ name: 'quiet-fling', ...quiet });
 
+        // ---- an IME composition holds the panel exactly like a gesture
+        //
+        // While a composition runs, the field changes with every candidate; a panel
+        // write in that window can move the caret or drop the composition. The panel
+        // must stay silent for the whole composition and then run the work once.
+        const composing = await evaluate(`
+            window.__harness.watchMutations();
+            const held = window.__harness.beginComposition();
+            let requests = 0;
+            for (let index = 0; index < 10; index += 1) {
+                requests += 1;
+                window.__harness.recount(index + 1);
+                window.__harness.renameRow(index % 20, 'c' + index);
+                await new Promise(r => requestAnimationFrame(() => r()));
+            }
+            // Read the live log rather than stopping the observer: the flush below
+            // has to be seen by the same observer, and a stopped one records nothing.
+            const during = { duringGesture: window.__mutationLog.duringGesture, total: window.__mutationLog.total };
+            const stateDuring = window.__harness.inputState();
+
+            // Composition ends: the waiting work must run without another request.
+            window.__harness.endComposition();
+            await new Promise(r => setTimeout(r, 120));
+            const after = window.__mutationLog.total;
+            window.__harness.stopWatchingMutations();
+
+            return { held, requests, during, stateDuring, after, stateAfter: window.__harness.inputState() };
+        `);
+        console.log(`IME composition (${composing.requests} sync requests while composing)  writes during composition ${composing.during.duringGesture} / ${composing.during.total}  held=${composing.held}  deferred=${composing.stateDuring.deferred}`);
+        if (!composing.held) {
+            failures.push('a composition did not hold the panel');
+        }
+        if (composing.during.total > 0) {
+            failures.push(`the panel wrote ${composing.during.total} time(s) during an IME composition`);
+        }
+        if (composing.stateDuring.deferred !== true) {
+            failures.push('a sync requested during a composition was not deferred');
+        }
+        if (composing.after === 0) {
+            failures.push('the work deferred by a composition never ran after it ended');
+        }
+        results.push({ name: 'ime-composition', ...composing });
+
+        // ---- typing is held for a moment, not forever
+        const typing = await evaluate(`
+            const held = window.__harness.typeKeys(40);
+            const stateTyping = window.__harness.inputState();
+            await window.__harness.waitForTypingHold();
+            const stateIdle = window.__harness.inputState();
+            return { held, stateTyping, stateIdle, rows: window.__harness.rowCount() };
+        `);
+        console.log(`typing burst (40 keys)  held ${typing.held} -> ${typing.stateIdle.held}`);
+        if (!typing.held) {
+            failures.push('a burst of keystrokes did not hold the panel');
+        }
+        if (typing.stateIdle.held) {
+            failures.push('the typing hold never expired, so the panel would stay frozen after typing');
+        }
+        results.push({ name: 'typing-hold', ...typing });
+
         // Positive control: the same observer must see writes when the gate is not
         // in the way. Without this, "0 writes" could just mean "observer is broken".
         const controlWrites = await evaluate(`
@@ -424,6 +499,100 @@ async function run() {
         `);
         console.log(`\nstructural churn (8x delete+duplicate, frame-sampled)  frames ${structural.frames}  empty ${structural.emptyFrames}  minRows ${structural.minRows}  final ${structural.finalRows}`);
         results.push({ name: 'structural', ...structural });
+
+        // ---- the footer select follows the prompt list
+        //
+        // Adding or deleting a prompt no longer rebuilds the panel, so the select
+        // is refreshed on its own. If that is wrong the panel looks fine and the
+        // "insert prompt" dropdown silently offers the old set — the exact failure
+        // a cheaper path invites, so it is asserted rather than assumed.
+        const selectSync = await evaluate(`
+            const seen = [];
+            for (let i = 0; i < 4; i += 1) {
+                // \`requestSync\` goes through the gesture gate, which may defer the
+                // sync instead of waiting for it, so the comparison is taken after a
+                // sync that is known to have run.
+                await window.__harness.duplicateRow(15 + i);
+                await window.__harness.sync();
+                seen.push({ step: 'duplicate', live: window.__harness.selectOptions(), expected: window.__harness.selectableOptions() });
+                await window.__harness.deleteRow(15 + i);
+                await window.__harness.sync();
+                seen.push({ step: 'delete', live: window.__harness.selectOptions(), expected: window.__harness.selectableOptions() });
+            }
+            const drifted = seen.filter(entry => entry.live.join('|') !== entry.expected.join('|'));
+            return {
+                checks: seen.length,
+                drifted: drifted.length,
+                sample: drifted.length ? drifted[0] : null,
+            };
+        `);
+        console.log(`footer select after add/remove  checks ${selectSync.checks}  drifted ${selectSync.drifted}`);
+        if (selectSync.drifted > 0) {
+            const sample = selectSync.sample;
+            failures.push(`the footer select stopped following the prompt list after ${sample.step} (live ${sample.live.length} options, expected ${sample.expected.length})`);
+        }
+        results.push({ name: 'select-sync', ...selectSync });
+
+        // ---- a long list is built across several tasks, not one
+        //
+        // Building rows serialises and parses them one at a time. On a long list
+        // that is either one long task — during which nothing else on the page can
+        // run — or several short ones. This adds 400 prompts in one go (the shape
+        // of an import) and watches the tasks the browser reports while the rows
+        // are built.
+        const slicing = await evaluate(`
+            const longTasks = [];
+            const observer = new PerformanceObserver(list => {
+                for (const entry of list.getEntries()) longTasks.push(entry.duration);
+            });
+            try { observer.observe({ entryTypes: ['longtask'] }); } catch { /* not supported here */ }
+            const before = window.__harness.rowCount();
+            const started = performance.now();
+            await window.__harness.addBulk(400);
+            const elapsed = performance.now() - started;
+            await new Promise(r => setTimeout(r, 120));
+            observer.disconnect();
+
+            // Everything above describes the build itself; the cleanup below is a
+            // separate cost and must not be mistaken for it.
+            const added = window.__harness.rowCount() - before;
+            const slices = window.__harness.state.slices;
+            const measuredTasks = [...longTasks];
+
+            // Put the page back: the later scenarios measure a normal-sized panel.
+            await window.__harness.removeBulk();
+            await window.__harness.sync();
+
+            return {
+                added,
+                slices,
+                elapsed,
+                longest: measuredTasks.length ? Math.max(...measuredTasks) : 0,
+                longTasks: measuredTasks.length,
+                restored: window.__harness.rowCount() === before,
+            };
+        `);
+        console.log(`long-list build (400 added)  rows +${slicing.added}  elapsed ${slicing.elapsed.toFixed(1)} ms  slices ${slicing.slices}  longest task ${slicing.longest.toFixed(1)} ms`);
+        if (slicing.added < 400) {
+            failures.push(`adding 400 prompts produced ${slicing.added} rows`);
+        }
+        if (!slicing.restored) {
+            failures.push('the long-list measurement left its 400 prompts behind for the later scenarios');
+        }
+        if (slicing.slices < 1) {
+            failures.push('a 400-row build ran as a single task instead of yielding to the browser');
+        }
+        // What is left in one task after slicing is the upstream render call itself:
+        // one synchronous function this extension calls and cannot cut in half. The
+        // claims worth guarding are that the build is not one task and that no single
+        // task holds the thread for the whole build.
+        if (slicing.longTasks > 0 && slicing.longest >= slicing.elapsed) {
+            failures.push(`the long-list build ran as one ${slicing.longest.toFixed(0)} ms task (elapsed ${slicing.elapsed.toFixed(0)} ms)`);
+        }
+        if (slicing.longTasks > 0 && slicing.longest > 100) {
+            failures.push(`the long-list build held the main thread for ${slicing.longest.toFixed(0)} ms in one task`);
+        }
+        results.push({ name: 'slicing', ...slicing });
 
         // ---- the pixel instrument must be able to see a blank panel
         //
@@ -586,6 +755,12 @@ async function run() {
         if (hammer.paced.longFrames > 5) {
             failures.push(`hammer dropped ${hammer.paced.longFrames} frames over 50 ms while paced`);
         }
+
+        // One machine-readable line so a measurement can be compared across
+        // sessions: the panel sum is a one-shot-operation cost that follows the
+        // device, the calibration is a fixed workload that follows it too.
+        const panelSum = panelMedians.reduce((total, median) => total + median, 0);
+        console.log(`summary panel-sum ${panelSum.toFixed(2)} calibration ${calibration.toFixed(2)}`);
 
         await client.close();
 

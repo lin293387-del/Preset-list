@@ -1,8 +1,11 @@
-# Preset Lite
+# Tavern Optimize
 
-A third-party extension for **TauriTavern** that keeps the chat-completion **preset / prompt panel**
-light and smooth: prompt rows are reconciled instead of rebuilt, token recounts move out of the
-interaction path, and the preset-apply event storm is coalesced.
+A third-party extension for **TauriTavern** that makes the frontend lighter and smoother.
+
+Today it covers the chat-completion **preset / prompt panel**: prompt rows are reconciled instead of
+rebuilt, token recounts move out of the interaction path, and the preset-apply event storm is
+coalesced. The same approach is being extended to the rest of the app — a mobile-only paint-cost
+layer, a sliced long-task scheduler and input-path isolation.
 
 Nothing inside the application source is modified. Every patched path delegates back to upstream the
 moment the extension is switched off, so the panel can always be returned to stock behaviour without
@@ -14,7 +17,7 @@ a reload.
 
 ## What it changes
 
-| Panel interaction | Upstream | With Preset Lite |
+| Panel interaction | Upstream | With Tavern Optimize |
 | --- | --- | --- |
 | Toggle / edit / delete / add a prompt | `#completion_prompt_manager` is cleared and fully rebuilt, ~4 listeners re-attached per row | only the affected row is re-rendered (upstream still builds its markup, pointed at that one prompt) |
 | Token numbers | rebuilt list waits for a full dry run of the whole generation pipeline | interaction paints immediately, the dry run is coalesced and runs once while the browser is idle, then the numbers are written **into the existing cells** — no markup is built at all |
@@ -35,13 +38,17 @@ line per path, once per session, so the host's log viewer shows whether the fast
 | Path | When | What it costs |
 | --- | --- | --- |
 | `tokens` | nothing but the numbers moved (a recount finished, or a prompt body was edited) | one text node per changed cell; upstream is not called |
-| `local` | one or a few rows changed (toggle, rename, reorder of a single entry) | upstream renders *those* rows only |
-| `full` | the row set moved (add, delete, duplicate, character change, error change) | upstream renders the whole list, reconciled by `data-pm-identifier` |
+| `local` | one or a few rows changed, **including** a row being added, deleted or duplicated | upstream renders *those* rows only; the rest are moved, never rebuilt |
+| `full` | the list on screen is not the one this extension built (character change, error change, first render) | upstream renders the whole list, reconciled by `data-pm-identifier` |
 
-Measured in Chromium at 200 prompts (`npm run test:browser`): `tokens` 5 ms, `local` 8 ms, `full`
-~100 ms per sync — against ~350 ms for a full upstream rebuild of the same list. Editing a prompt
-body and a finished recount both stay on `tokens`, which is what makes typing in the editor and
-watching the numbers settle feel free.
+Measured in Chromium at 200 prompts (`npm run test:browser`): `tokens` 2.5–5 ms, `local` 3–9 ms per
+sync. Adding or deleting a prompt is a `local` sync that parses **one** row; before, it re-rendered
+the list and parsed all 200. Editing a prompt body and a finished recount both stay on `tokens`, which
+is what makes typing in the editor and watching the numbers settle feel free.
+
+The footer's "insert prompt" select is the one piece of chrome that follows the list, so it is tracked
+on its own and only the options that actually changed are adopted — replacing all 200 `<option>` nodes
+cost 27 ms for a single added prompt.
 
 ### Nothing repaints during a gesture
 
@@ -55,9 +62,36 @@ renderer is not called at all: the request is remembered and applied once when t
   gesture ends, so the list never empties under the finger and the scroll offset never jumps.
 
 The scroll range is also kept honest: the height reserved for a not-yet-painted row is published from
-a real row (`--tt-pl-row-height`, kept up to date by a `ResizeObserver`), so flinging cannot make the
+a real row (`--tt-to-row-height`, kept up to date by a `ResizeObserver`), so flinging cannot make the
 scrollbar or the range drift. The browser test measures that drift at 0 px; with a fixed placeholder
 it was 1552 px at 200 rows, which is exactly the "blank flash then jump" users report.
+
+### Nothing is written while you type
+
+An IME composition is the one moment where a DOM write can lose a sentence: the field changes value
+with every candidate, and a node replaced under the caret drops the composition. So the panel holds
+off for the *whole* composition — not a fixed timeout — and for a moment after ordinary keystrokes,
+then applies the waiting work once (`src/input.js`). Keystrokes are folded into one frame's worth of
+bookkeeping, so a fast typist cannot outrun the queue. The browser test asserts 10 sync requests
+during a composition produce zero DOM writes, are reported as deferred, and run when it ends.
+
+### Long lists are built across several tasks
+
+Assembling and parsing rows is work nobody is waiting for, so it is sliced: the builder yields once
+the current slice has used 8 ms, through `scheduler.yield` where the host has it, then
+`scheduler.postTask`, then `setTimeout(0)` (`src/perf/slicer.js`). A 400-prompt import no longer
+holds the main thread in one task; a short list never yields at all, so the fast path pays one clock
+read per row.
+
+### The mobile paint layer
+
+On a WebView, a `backdrop-filter` is rasterised by re-rendering the region behind it, and TT's chat
+carries a blurred bar plus a blurred halo on every glyph. Only on mobile, and only while the master
+switch is on, the extension removes those blurs and the per-glyph halo, trades large blur shadows for
+a hairline drawn inside the element's own box, and narrows transitions to `transform`/`opacity` so the
+compositor can run them without the main thread. Measured against TT's own stylesheet in
+`tests/browser/paint-bench`: 40 ms per scrolled frame before, 17 ms after. Desktop is deliberately
+untouched — its GPU draws the same effects cheaply.
 
 ## Requirements
 
@@ -70,11 +104,11 @@ it was 1552 px at 200 rows, which is exactly the "blank flash then jump" users r
 Through the extension installer (recommended, updatable):
 
 ```
-https://github.com/lin293387-del/Preset-list
+https://github.com/lin293387-del/Tavern-Optimize
 ```
 
-Or manually: copy this folder to `<data_root>/default-user/extensions/Preset-list/` (local) or
-`<data_root>/extensions/third-party/Preset-list/` (global), then enable **Preset Lite** in the
+Or manually: copy this folder to `<data_root>/default-user/extensions/Tavern-Optimize/` (local) or
+`<data_root>/extensions/third-party/Tavern-Optimize/` (global), then enable **Tavern Optimize** in the
 extension list. `manifest.json` must stay at the root of the folder.
 
 Uninstall = disable or delete the extension; no data outside the extension store is written.
@@ -83,11 +117,11 @@ Uninstall = disable or delete the extension; no data outside the extension store
 
 ## Settings
 
-`Extensions → Preset Lite`
+`Extensions → Tavern Optimize`
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| Enable Preset Lite | on | Master switch. Off restores stock rendering instantly. |
+| Enable Tavern Optimize | on | Master switch. Off restores stock rendering instantly. |
 | Keep last known token numbers | on | While a recount is pending the numbers stay visible (dimmed). Off shows `-` like upstream. |
 | Coalesce preset apply events | on | Merges the preset-apply `input` storm and replays it once at the end of the window. Fields the preset did not move are skipped, and a `change` event re-fired for an unmoved select is dropped. Everything else keeps its original timing. |
 | Report preset field conflicts | on | If a replayed handler rewrites a field the preset just wrote, that field is listed in the status area instead of being silently swallowed. |
@@ -113,10 +147,10 @@ leaves the frontend; everything else is local work.
 Runtime API for the console:
 
 ```js
-__PRESET_LITE__.snapshot()      // scheduler, cache, panel sync stats, diagnostics
-__PRESET_LITE__.enable(false)   // compare against stock behaviour without touching settings
-__PRESET_LITE__.recountNow()    // force an exact recount
-__PRESET_LITE__.clearCache()    // drop every cached token count
+__TAVERN_OPTIMIZE__.snapshot()      // scheduler, cache, panel sync stats, diagnostics
+__TAVERN_OPTIMIZE__.enable(false)   // compare against stock behaviour without touching settings
+__TAVERN_OPTIMIZE__.recountNow()    // force an exact recount
+__TAVERN_OPTIMIZE__.clearCache()    // drop every cached token count
 ```
 
 ---
@@ -173,9 +207,10 @@ keep showing `-`.
 
 ```
 npm install          # devDependencies: typescript, happy-dom, ws
-npm test             # 99 tests: pure logic, panel DOM reconciliation, patch layer, runtime smoke
+npm test             # 116 tests: pure logic, panel DOM reconciliation, patch layer, runtime smoke
 npm run typecheck    # tsc --noEmit with checkJs (JSDoc types, no build step)
-npm run test:browser # real Chromium: render paths, fling, blank frames, structural churn
+npm run test:browser # real Chromium: render paths, fling, blank frames, structural churn,
+                     #   IME composition, long-list slicing, footer select
 npm run test:browser:quick   # same, fewer rows and repetitions
 ```
 
@@ -241,8 +276,8 @@ MIT — see [LICENSE](LICENSE).
 把 token 重算从交互路径挪到空闲时执行（先出画面，算完原地写回数字），并合并预设切换产生的上百次
 `input` 事件。**不改任何应用源码**，关掉开关就立刻回到原生行为。
 
-**装**：在扩展安装器里填 `https://github.com/lin293387-del/Preset-list`，或把整个文件夹放进
-`<数据目录>/default-user/extensions/Preset-list/`，然后在扩展列表里启用。
+**装**：在扩展安装器里填 `https://github.com/lin293387-del/Tavern-Optimize`，或把整个文件夹放进
+`<数据目录>/default-user/extensions/Tavern-Optimize/`，然后在扩展列表里启用。
 
 **验证**：打开左栏「AI 响应配置」面板，交互结束后 token 数字应在一个空闲窗口内刷新成真实值；
 只有真正没有 token（被禁用/内容为空）的提示词才显示 `-`。

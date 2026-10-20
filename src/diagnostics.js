@@ -4,7 +4,7 @@
  * behind the scenes.
  *
  * Warnings and errors always reach the console. Routine notes are only kept in
- * memory (the last few dozen) and are read through `__PRESET_LITE__.snapshot()`,
+ * memory (the last few dozen) and are read through `__TAVERN_OPTIMIZE__.snapshot()`,
  * so hot paths can report what they did without flooding the console.
  */
 
@@ -12,7 +12,7 @@ const MAX_NOTES = 60;
 const MAX_CONFLICTS = 40;
 
 export function createDiagnostics() {
-    const prefix = '[Preset Lite]';
+    const prefix = '[Tavern Optimize]';
     /** @type {Array<{ at: number, kind: string, message: string }>} */
     const notes = [];
     /** @type {Map<string, number>} */

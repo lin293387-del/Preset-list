@@ -53,7 +53,7 @@ export function createStorage({ namespace, key }) {
                         return result?.found ? result.value : null;
                     } catch (error) {
                         backend = getLocalStorage() ? 'localStorage' : 'memory';
-                        console.warn('[Preset Lite] Extension store read failed, falling back:', error);
+                        console.warn('[Tavern Optimize] Extension store read failed, falling back:', error);
                     }
                 }
             }
@@ -68,7 +68,7 @@ export function createStorage({ namespace, key }) {
                     try {
                         return JSON.parse(raw);
                     } catch (error) {
-                        console.warn('[Preset Lite] Dropping unreadable local cache entry:', error);
+                        console.warn('[Tavern Optimize] Dropping unreadable local cache entry:', error);
                         storage.removeItem(localKey);
                         return null;
                     }
@@ -90,7 +90,7 @@ export function createStorage({ namespace, key }) {
                         return;
                     } catch (error) {
                         backend = getLocalStorage() ? 'localStorage' : 'memory';
-                        console.warn('[Preset Lite] Extension store write failed, falling back:', error);
+                        console.warn('[Tavern Optimize] Extension store write failed, falling back:', error);
                     }
                 }
             }
@@ -103,7 +103,7 @@ export function createStorage({ namespace, key }) {
                         return;
                     } catch (error) {
                         backend = 'memory';
-                        console.warn('[Preset Lite] localStorage write failed, keeping cache in memory:', error);
+                        console.warn('[Tavern Optimize] localStorage write failed, keeping cache in memory:', error);
                     }
                 }
             }
@@ -119,7 +119,7 @@ export function createStorage({ namespace, key }) {
                     await store.deleteJson({ namespace, key });
                     return;
                 } catch (error) {
-                    console.warn('[Preset Lite] Extension store delete failed:', error);
+                    console.warn('[Tavern Optimize] Extension store delete failed:', error);
                 }
             }
             getLocalStorage()?.removeItem(localKey);

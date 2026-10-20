@@ -10,6 +10,7 @@
 import { createPanelState, syncPanel } from '../../src/render/panel.js';
 import { createDiagnostics } from '../../src/diagnostics.js';
 import { createGestureGate } from '../../src/gesture.js';
+import { createInputGate } from '../../src/input.js';
 
 const PREFIX = 'completion_';
 const ROW_COUNT = Number(new URLSearchParams(location.search).get('rows') ?? 200);
@@ -193,7 +194,15 @@ scroller.addEventListener('scroll', () => markScrolling(), { passive: true });
  */
 let gestureHeld = false;
 let scrollHoldTimer = null;
-const gate = createGestureGate({ isHeld: () => gestureHeld, diagnostics });
+// Mirrors the runtime wiring: the panel is held during a gesture *and* while the
+// user is composing or typing, for the same reason and with the same gate.
+const inputGate = createInputGate({
+    diagnostics,
+    onIdle: reason => {
+        gate.flush(reason);
+    },
+});
+const gate = createGestureGate({ isHeld: () => gestureHeld || inputGate.isHeld(), diagnostics });
 const SCROLL_HOLD_MS = 160;
 
 function markScrolling() {
@@ -223,7 +232,48 @@ window.__harness = {
     rows: ROW_COUNT,
     sync: () => syncPanel(context),
     requestSync,
+    /**
+     * A fixed, DOM-heavy workload measured on the page's own clock.
+     *
+     * The panel scenarios time single one-shot operations, so their absolute
+     * values follow the device — thermal state, background load — and move by 60%
+     * between sessions on identical code. This number moves with them and not
+     * with the extension, which makes `panel / calibration` comparable across
+     * sessions. The sink keeps the work observable so a JIT cannot elide it.
+     */
+    calibrate(rounds = 1200) {
+        const started = performance.now();
+        let sink = 0;
+        for (let index = 0; index < rounds; index += 1) {
+            const holder = document.createElement('div');
+            holder.innerHTML = `<li class="completion_prompt_manager_prompt" data-pm-identifier="c-${index}">`
+                + '<span class="completion_prompt_manager_prompt_name">Calibration row</span>'
+                + '<span class="completion_prompt_manager_prompt_tokens" data-pm-tokens="12"><span>12</span></span></li>';
+            sink += holder.querySelectorAll('li').length;
+            sink += holder.textContent.length & 1;
+        }
+        return performance.now() - started + sink * 0;
+    },
     gateState: () => ({ held: gestureHeld, deferred: gate.isDeferred(), reason: gate.deferredReason() }),
+
+    /**
+     * The chat field, as the runtime sees it: composition and keystrokes.
+     *
+     * These call the same gate the runtime calls, with the same wiring, so the
+     * assertions that follow measure the gate rather than a stand-in for it.
+     */
+    beginComposition: () => { inputGate.beginComposition(); return inputGate.isHeld(); },
+    endComposition: () => { inputGate.endComposition(); return inputGate.isHeld(); },
+    inputState: () => ({ composing: inputGate.isComposing(), held: inputGate.isHeld(), deferred: gate.isDeferred() }),
+    /** A burst of keystrokes; the gate must fold them into one frame. */
+    typeKeys(count = 10) {
+        for (let index = 0; index < count; index += 1) {
+            inputGate.noteInput();
+        }
+        return inputGate.isHeld();
+    },
+    /** Waits for the hold to expire the way a user stopping typing would. */
+    waitForTypingHold: () => new Promise(resolve => setTimeout(resolve, 200)),
     /** Count DOM mutations the panel makes, so "no writes during a fling" is provable. */
     watchMutations() {
         const list = document.getElementById('completion_prompt_manager_list');
@@ -245,7 +295,12 @@ window.__harness = {
         return window.__mutationLog ?? { total: 0, duringGesture: 0 };
     },
     get state() {
-        return { lastPath: context.state.lastPath, lastStats: context.state.lastStats, structureInvalid: context.state.structureInvalid };
+        return {
+            lastPath: context.state.lastPath,
+            lastStats: context.state.lastStats,
+            structureInvalid: context.state.structureInvalid,
+            slices: context.state.lastSlices,
+        };
     },
     diagnostics: () => diagnostics.snapshot(),
 
@@ -293,6 +348,42 @@ window.__harness = {
         return requestSync();
     },
 
+    /**
+     * Adds many prompts in one go (an import, or a character with a long list).
+     *
+     * The rows for them have to be built at once, which is the case the slicer
+     * exists for: the work grows with the list and none of it is urgent.
+     */
+    async addBulk(count = 100) {
+        const order = instance.serviceSettings.prompt_order[0].order;
+        const template = prompts.find(prompt => prompt && !prompt.system_prompt) ?? prompts[0];
+        for (let i = 0; i < count; i += 1) {
+            const copy = { ...template, identifier: `bulk-${Date.now()}-${i}`, name: `Bulk ${i}` };
+            prompts.push(copy);
+            order.push({ identifier: copy.identifier, enabled: true });
+            counts[copy.identifier] = 10 + i;
+        }
+        return requestSync();
+    },
+
+    /** Removes everything `addBulk` added, so a measurement does not change the page for later ones. */
+    async removeBulk() {
+        const order = instance.serviceSettings.prompt_order[0].order;
+        for (let index = prompts.length - 1; index >= 0; index -= 1) {
+            const prompt = prompts[index];
+            if (!prompt || !String(prompt.identifier).startsWith('bulk-')) {
+                continue;
+            }
+            prompts.splice(index, 1);
+            delete counts[prompt.identifier];
+            const at = order.findIndex(entry => entry.identifier === prompt.identifier);
+            if (at >= 0) {
+                order.splice(at, 1);
+            }
+        }
+        return requestSync();
+    },
+
     /** Delete one prompt (row set change, the helper script's delete action). */
     async deleteRow(index = 0) {
         const target = prompts[index % prompts.length];
@@ -309,6 +400,15 @@ window.__harness = {
         pending = Boolean(value);
     },
 
+    /** The footer select as it is on screen: whatever upstream last put in it. */
+    selectOptions: () => Array.from(document.querySelectorAll('#completion_prompt_manager_footer_append_prompt option'))
+        .map(option => `${option.value}\u0000${option.textContent}`),
+    /** What the prompt model says the footer select should contain. */
+    selectableOptions: () => [...instance.serviceSettings.prompts]
+        .filter(prompt => prompt && !prompt.system_prompt)
+        .sort((left, right) => left.name.localeCompare(right.name))
+        .map(prompt => `${prompt.identifier}\u0000${prompt.name}`),
+
     rowCount: () => document.querySelectorAll('#completion_prompt_manager_list li[data-pm-identifier]').length,
     setVariant,
     variant: () => variantName,
@@ -317,7 +417,7 @@ window.__harness = {
         return row ? row.getBoundingClientRect().height : 0;
     },
     publishedRowHeight: () => getComputedStyle(document.getElementById('completion_prompt_manager_list'))
-        .getPropertyValue('--tt-pl-row-height').trim(),
+        .getPropertyValue('--tt-to-row-height').trim(),
 
     /** Reset the scroll position for the next measurement. */
     scrollTo: value => { scroller.scrollTop = value; },

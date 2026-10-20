@@ -25,8 +25,9 @@
  * silent no-op.
  */
 
+import { runSliced } from '../perf/slicer.js';
 import { RowParseError, extractRowMeta, planRowOps } from './plan.js';
-import { applyLocalRows, applyRowPlan, syncHeadNodes, updateTokenNumbers } from './apply.js';
+import { applyLocalRows, applyRowPlan, createNodeFromHtml, syncHeadNodes, updateTokenNumbers } from './apply.js';
 
 /** Consecutive unexpected render failures before the extension steps aside. */
 const MAX_SYNC_FAILURES = 3;
@@ -46,6 +47,7 @@ export function createPanelState() {
         nodeByKey: new Map(),
         previousByKey: new Map(),
         structureSignature: null,
+        selectSignature: null,
         errorSignature: undefined,
         placeholderApplied: false,
         structureInvalid: false,
@@ -61,6 +63,10 @@ export function createPanelState() {
         rowSignatures: new Map(),
         /** Instance-wide inputs of the row template (token usage, budgets, overrides). */
         rowGlobals: '',
+        /** Model key order the list was last left in. */
+        appliedModelKeys: null,
+        /** How many times the last row build yielded to the browser. */
+        lastSlices: 0,
         /** Watches the first row so the CSS placeholder height matches reality. */
         rowObserver: null,
         rowObserverTarget: null,
@@ -94,17 +100,46 @@ function findScroller(element) {
  * stay collapsed: the panel jumped back to the top of the prompt list after a
  * delete or a duplicate.
  *
+ * Checking the offset afterwards is not free: reading `scrollTop` after the sync
+ * wrote to the DOM forces a synchronous layout of every row, which a CPU profile
+ * charges to that read and which showed up as the single most expensive line in
+ * the render path. Two things keep it out of the blocking window:
+ *
+ * - a sync that only rewrote token cells cannot shrink the list, so it asks for no
+ *   check at all;
+ * - a sync that did move rows hands the check to the next animation frame. The
+ *   browser has to lay the list out anyway before it paints, and a frame callback
+ *   runs before that layout, so the correction lands before the clamped position
+ *   is ever shown — while the interaction returns without waiting for it.
+ *
  * @param {HTMLElement | null | undefined} element
- * @returns {{ end: () => void }}
+ * @returns {{ end: (rowsTouched?: boolean) => void, endNow: () => void }}
  */
 function preserveScroll(element) {
     const scroller = findScroller(element);
     if (!scroller) {
-        return { end() {} };
+        return { end() {}, endNow() {} };
     }
     const top = scroller.scrollTop;
     return {
-        end() {
+        /** @param {boolean} [rowsTouched] */
+        end(rowsTouched = true) {
+            if (!rowsTouched) {
+                return;
+            }
+            const restore = () => {
+                if (scroller.scrollTop !== top) {
+                    scroller.scrollTop = top;
+                }
+            };
+            if (typeof requestAnimationFrame !== 'function') {
+                restore();
+                return;
+            }
+            requestAnimationFrame(restore);
+        },
+        /** The stock fallback runs when the extension is stepping aside: settle now. */
+        endNow() {
             if (scroller.scrollTop !== top) {
                 scroller.scrollTop = top;
             }
@@ -141,7 +176,7 @@ function observeRowMetrics(state, listElement) {
     const publish = () => {
         const height = first.getBoundingClientRect().height;
         if (height > 0) {
-            listElement.style.setProperty('--tt-pl-row-height', `${height.toFixed(2)}px`);
+            listElement.style.setProperty('--tt-to-row-height', `${height.toFixed(2)}px`);
         }
     };
 
@@ -166,6 +201,23 @@ function stopRowMetrics(state) {
     state.rowObserver = null;
     state.rowObserverTarget = null;
     state.rowObserverList = null;
+}
+
+/**
+ * @param {string[] | null | undefined} first
+ * @param {string[]} second
+ * @returns {boolean} True when both arrays hold the same keys in the same order.
+ */
+function sameKeys(first, second) {
+    if (!Array.isArray(first) || first.length !== second.length) {
+        return false;
+    }
+    for (let index = 0; index < second.length; index += 1) {
+        if (first[index] !== second[index]) {
+            return false;
+        }
+    }
+    return true;
 }
 
 /**
@@ -200,21 +252,39 @@ function getPrefix(instance) {
 }
 
 /**
- * Signature of everything the footer select and row set depend on. When it
- * changes the structure is rebuilt (add/delete/import/rename prompts), otherwise
- * the existing DOM is reused.
+ * Signature of the panel's identity: which character the container belongs to.
+ *
+ * It deliberately says nothing about the prompt list. Adding or removing a prompt
+ * is reconciled against the rows on screen (`planStructuralDelta`), and putting
+ * the prompt list in here made that reconciliation unreachable: every add or
+ * delete rebuilt the whole container — upstream render, 200 rows unparented and
+ * re-inserted, a fresh layout — to reach the same DOM the delta path builds by
+ * touching one row.
  *
  * @param {any} instance
  * @returns {string}
  */
-export function structureSignature(instance) {
+export function containerSignature(instance) {
+    return `${instance?.activeCharacter?.id ?? ''}\u0001${getPrefix(instance)}`;
+}
+
+/**
+ * Signature of the footer's "insert prompt" select: every selectable prompt's
+ * identifier and name, which is exactly what upstream puts in it.
+ *
+ * The select is the one part of the chrome that follows the prompt list, so it is
+ * tracked on its own and refreshed on its own.
+ *
+ * @param {any} instance
+ * @returns {string}
+ */
+export function selectSignature(instance) {
     const prompts = Array.isArray(instance?.serviceSettings?.prompts) ? instance.serviceSettings.prompts : [];
-    const selectable = prompts
+    return prompts
         .filter(prompt => prompt && !prompt.system_prompt)
         .map(prompt => `${prompt.identifier}\u0000${prompt.name}`)
-        .sort();
-    const characterId = instance?.activeCharacter?.id ?? '';
-    return `${characterId}\u0001${selectable.join('\u0002')}`;
+        .sort()
+        .join('\u0002');
 }
 
 /**
@@ -323,9 +393,22 @@ function installRowDelegation(instance, state) {
 function takeLiveRows(state) {
     const list = state.listElement;
     const rows = list ? Array.from(list.children).filter(node => node.getAttribute('data-pm-identifier')) : [];
+    const indexedNodes = state.nodeByKey;
+    const indexedMeta = state.previousByKey;
     state.nodeByKey = new Map();
     state.previousByKey = new Map();
     for (const node of rows) {
+        const key = node.getAttribute('data-pm-identifier');
+        // A row this extension indexed last sync, still the same node: its markup
+        // is whatever it was rendered from, so the fingerprint is already known.
+        // Re-deriving it means serialising and re-parsing every row — 200 of them
+        // on a long list — to arrive at the answer that is already in hand.
+        const known = indexedNodes.get(key);
+        if (known === node && indexedMeta.has(key)) {
+            state.nodeByKey.set(key, node);
+            state.previousByKey.set(key, indexedMeta.get(key));
+            continue;
+        }
         try {
             const meta = extractRowMeta(node.outerHTML);
             state.previousByKey.set(meta.key, meta);
@@ -399,8 +482,47 @@ async function rebuildStructure(context) {
     installRowDelegation(instance, state);
     observeRowMetrics(state, state.listElement);
 
-    state.structureSignature = structureSignature(instance);
+    state.structureSignature = containerSignature(instance);
+    state.selectSignature = selectSignature(instance);
     state.errorSignature = instance.error;
+    // The rows came back in whatever order they were before: the next sync has to
+    // look at the list to know whether that is still model order.
+    state.appliedModelKeys = null;
+}
+
+/**
+ * Refreshes the footer's "insert prompt" select from upstream markup.
+ *
+ * Only the options are adopted: the live select keeps its own node (and whatever
+ * upstream bound to it), the buttons next to it keep their listeners, and the
+ * header and the rows are not touched at all. Upstream stays the author of the
+ * option markup, so a prompt that was added, renamed or deleted shows up there
+ * without this extension owning a copy of that template.
+ *
+ * @param {object} context
+ * @returns {Promise<void>}
+ */
+async function refreshSelectOptions(context) {
+    const { instance, originals, state } = context;
+    const live = state.select;
+    if (!(live instanceof HTMLElement)) {
+        return;
+    }
+
+    const scratch = document.createElement('div');
+    const restore = swapRenderTarget(instance, scratch);
+    try {
+        await originals.renderPromptManager.call(instance);
+    } finally {
+        restore();
+    }
+
+    const fresh = scratch.querySelector(`#${getPrefix(instance)}prompt_manager_footer_append_prompt`);
+    if (!(fresh instanceof HTMLElement)) {
+        return;
+    }
+    live.replaceChildren(...Array.from(fresh.childNodes));
+    state.selectSignature = selectSignature(instance);
 }
 
 /**
@@ -521,16 +643,15 @@ function rowGlobals(instance) {
  * render returns `null`: upstream may have started reading a field this
  * fingerprint does not know about, and only a full rebuild is safe then.
  *
- * @param {any} instance
  * @param {any} prompt
- * @param {string} globals
+ * @param {string} globals Instance-wide fingerprint from `rowGlobals`.
+ * @param {any} entry The prompt's order entry, from `createLookups`.
  * @returns {string | null}
  */
-function rowSignature(instance, prompt, globals) {
+function rowSignature(prompt, globals, entry) {
     if (!prompt) {
         return null;
     }
-    const entry = instance.getPromptOrderEntry?.(instance.activeCharacter, prompt.identifier);
     const position = typeof prompt.injection_position === 'number' ? prompt.injection_position : 0;
     return [
         globals,
@@ -562,11 +683,29 @@ function promptShape(prompt) {
  * against. Runs after every sync that rendered rows, so the next sync compares
  * against what is really on screen.
  *
+ * A sync that rebuilt only some rows (`onlyKeys`) only has to refresh those:
+ * every other row on screen still shows what its stored fingerprint describes,
+ * and a sync that got this far already proved the instance-wide fingerprint did
+ * not move. Recomputing all of them would be work whose result is thrown away.
+ *
  * @param {object} context
+ * @param {string[] | null} [onlyKeys]
  */
-function captureRowSignatures(context) {
+async function captureRowSignatures(context, onlyKeys = null) {
     const { instance, state } = context;
     const globals = rowGlobals(instance);
+    if (Array.isArray(onlyKeys)) {
+        const targeted = createLookups(instance);
+        // A long import arrives with hundreds of new keys at once; the fingerprints
+        // are bookkeeping, so they are spread over several tasks like the build.
+        await runSliced(onlyKeys, key => {
+            const prompt = targeted.prompts.get(key) ?? null;
+            const signature = rowSignature(prompt, globals, targeted.order.get(key) ?? null);
+            state.rowSignatures.set(key, signature === null ? null : `${signature}\u0003${promptShape(prompt)}`);
+        });
+        return;
+    }
+    const lookups = createLookups(instance);
     state.rowGlobals = globals;
     state.rowSignatures = new Map();
     let prompts;
@@ -578,14 +717,65 @@ function captureRowSignatures(context) {
     if (!Array.isArray(prompts)) {
         return;
     }
-    for (const prompt of prompts) {
+    await runSliced(prompts, prompt => {
         if (!prompt) {
-            continue;
+            return;
         }
         const key = String(prompt.identifier);
-        const signature = rowSignature(instance, prompt, globals);
+        const signature = rowSignature(prompt, globals, lookups.order.get(key) ?? null);
         state.rowSignatures.set(key, signature === null ? null : `${signature}\u0003${promptShape(prompt)}`);
+    });
+}
+
+/**
+ * Per-sync lookup tables for the two upstream accessors the render path needs.
+ *
+ * Both are linear searches over the whole list — `PromptManager.getPromptById`
+ * is a `find` over `serviceSettings.prompts`, `getPromptOrderEntry` a `find`
+ * over the character's order. Asking them once per row makes a sync quadratic:
+ * 200 prompts cost about 80k comparisons per pass, and a sync makes two passes.
+ * Built once per sync, the same questions become hash lookups.
+ *
+ * `find` semantics are preserved: the first match wins.
+ *
+ * @param {any} instance
+ * @returns {{ prompts: Map<string, any>, order: Map<string, any> }}
+ */
+function createLookups(instance) {
+    const prompts = new Map();
+    const list = instance?.serviceSettings?.prompts;
+    if (Array.isArray(list)) {
+        for (const prompt of list) {
+            if (!prompt || prompt.identifier === undefined || prompt.identifier === null) {
+                continue;
+            }
+            const key = String(prompt.identifier);
+            if (!prompts.has(key)) {
+                prompts.set(key, prompt);
+            }
+        }
     }
+
+    const order = new Map();
+    let entries = [];
+    try {
+        entries = instance?.getPromptOrderForCharacter?.(instance.activeCharacter) ?? [];
+    } catch {
+        entries = [];
+    }
+    if (Array.isArray(entries)) {
+        for (const entry of entries) {
+            if (!entry || entry.identifier === undefined || entry.identifier === null) {
+                continue;
+            }
+            const key = String(entry.identifier);
+            if (!order.has(key)) {
+                order.set(key, entry);
+            }
+        }
+    }
+
+    return { prompts, order };
 }
 
 /**
@@ -627,18 +817,24 @@ async function buildRows(context, onlyKeys = null) {
         }
     }
 
+    /** @type {Element[]} */
     const headNodes = [];
+    /** @type {Array<object>} */
     const nextRows = [];
-    for (const node of Array.from(scratchList.children)) {
+    // Serialising and parsing a row is the part of a build that grows with the
+    // list, and the nodes here belong to a detached list, so nothing observes a
+    // pause. A long panel therefore pays for its rows across several tasks
+    // instead of holding the main thread for the whole build.
+    const slices = await runSliced(Array.from(scratchList.children), node => {
         const key = node.getAttribute('data-pm-identifier');
         if (!key) {
             headNodes.push(node);
-            continue;
+            return;
         }
         const html = node.outerHTML;
-        const meta = extractRowMeta(html);
-        nextRows.push({ ...meta, html });
-    }
+        nextRows.push({ ...extractRowMeta(html), html });
+    });
+    state.lastSlices = slices;
 
     return { headNodes, nextRows };
 }
@@ -653,7 +849,7 @@ async function buildRows(context, onlyKeys = null) {
  * @param {object} context
  * @returns {object} Plan statistics.
  */
-function syncTokensOnly(context) {
+function syncTokensOnly(context, liveRows) {
     const { instance, state } = context;
     if (state.placeholderApplied) {
         // The placeholder owns the cells right now; writing numbers here would
@@ -668,7 +864,7 @@ function syncTokensOnly(context) {
     const counts = instance?.tokenHandler?.getCounts?.() ?? {};
     const values = new Map();
 
-    for (const node of rowNodes(liveList)) {
+    for (const node of liveRows ?? rowNodes(liveList)) {
         const key = node.getAttribute('data-pm-identifier');
         if (!key) {
             continue;
@@ -685,7 +881,12 @@ function syncTokensOnly(context) {
         }
     }
 
-    const applied = updateTokenNumbers(liveList, values);
+    // Nothing to write is the common case for a recount that only moved numbers
+    // nothing displays: taking the walk anyway would read every row again to
+    // discover that the map it was given is empty.
+    const applied = values.size > 0
+        ? updateTokenNumbers(liveList, values)
+        : { tokens: 0, rebuilt: 0 };
     const stats = { created: 0, updated: 0, tokens: applied.tokens, removed: 0, moved: 0, rebuilt: applied.rebuilt, replaced: 0 };
 
     // A row whose cell could not be patched in place has to be rendered again on
@@ -838,7 +1039,7 @@ function applyStalePresentation(context) {
     };
 
     if (placeholder) {
-        list.classList.remove('tt-pl-stale');
+        list.classList.remove('tt-to-stale');
         if (!state.placeholderApplied) {
             for (const cell of list.querySelectorAll('.prompt_manager_prompt_tokens')) {
                 cell.setAttribute('data-pm-tokens', '-');
@@ -856,8 +1057,8 @@ function applyStalePresentation(context) {
     }
 
     const stale = pending && settings.get().keepStaleNumbers;
-    list.classList.toggle('tt-pl-stale', stale);
-    state.headerDiv?.classList.toggle('tt-pl-stale', stale);
+    list.classList.toggle('tt-to-stale', stale);
+    state.headerDiv?.classList.toggle('tt-to-stale', stale);
     const hint = stale ? 'Recalculating token counts…' : '';
     if (state.totalDiv && state.totalDiv.getAttribute('title') !== hint) {
         state.totalDiv.setAttribute('title', hint);
@@ -885,9 +1086,10 @@ function choosePath(context, modelKeys) {
         return { path: 'full', keys: modelKeys };
     }
 
+    const lookups = createLookups(instance);
     const changed = modelKeys.filter(key => {
-        const prompt = instance.getPromptById?.(key);
-        const signature = rowSignature(instance, prompt, globals);
+        const prompt = lookups.prompts.get(key) ?? null;
+        const signature = rowSignature(prompt, globals, lookups.order.get(key) ?? null);
         const stored = state.rowSignatures.get(key);
         if (signature === null || stored === undefined) {
             return true;
@@ -933,6 +1135,197 @@ function announcePath(context) {
 }
 
 /**
+ * Recognises the one structural change that does not need every row rebuilt:
+ * prompts were added and/or removed while every surviving row still carries its
+ * old fingerprint.
+ *
+ * Upstream charges a whole-list row build for an add or a delete. The list only
+ * has to gain the new rows (upstream still builds the markup, pointed at just
+ * those prompts) and drop the departed ones. Anything this reasoning does not
+ * cover — a different fingerprint, a moved budget, an unknown prompt shape —
+ * returns null, which sends the sync back to the paths that handle everything.
+ *
+ * @param {object} context
+ * @param {string[]} modelKeys
+ * @returns {{ added: string[], removed: string[], reorder: boolean } | null}
+ */
+function planStructuralDelta(context, modelKeys, liveRows) {
+    const { instance, state } = context;
+    const known = state.nodeByKey;
+    if (known.size === 0) {
+        return null;
+    }
+
+    const modelSet = new Set(modelKeys);
+    const added = modelKeys.filter(key => !known.has(key));
+    /** @type {string[]} */
+    const removed = [];
+    for (const key of known.keys()) {
+        if (!modelSet.has(key)) {
+            removed.push(key);
+        }
+    }
+    // The rows can only be in the wrong order when the model order itself moved,
+    // and comparing two key arrays answers that without touching the list. Only
+    // when it did move does the DOM get read.
+    const sameOrder = sameKeys(state.appliedModelKeys, modelKeys);
+    let reorder = false;
+    if (!sameOrder) {
+        // A pure reorder is structural too, and it needs no markup at all: the
+        // nodes are already on screen, they are just in the old order.
+        const survivingModelOrder = modelKeys.filter(key => known.has(key));
+        /** @type {string[]} */
+        const domOrder = [];
+        for (const node of liveRows ?? rowNodes(state.listElement)) {
+            const key = node.getAttribute('data-pm-identifier');
+            if (key !== null && known.has(key) && modelSet.has(key)) {
+                domOrder.push(key);
+            }
+        }
+        reorder = survivingModelOrder.length === domOrder.length
+            && survivingModelOrder.some((key, index) => key !== domOrder[index]);
+    }
+
+    if (added.length === 0 && removed.length === 0 && !reorder) {
+        return null;
+    }
+
+    const globals = rowGlobals(instance);
+    if (globals !== state.rowGlobals) {
+        // Token usage, the budget, the override lists or the character moved:
+        // the rows that survived may look different too, so this is not a delta.
+        return null;
+    }
+
+    const lookups = createLookups(instance);
+    for (const key of modelKeys) {
+        if (!known.has(key)) {
+            continue;
+        }
+        const prompt = lookups.prompts.get(key) ?? null;
+        const signature = rowSignature(prompt, globals, lookups.order.get(key) ?? null);
+        const stored = state.rowSignatures.get(key);
+        if (signature === null || stored === undefined) {
+            return null;
+        }
+        if (stored !== `${signature}\u0003${promptShape(prompt)}`) {
+            return null;
+        }
+    }
+
+    return { added, removed, reorder };
+}
+
+/**
+ * Applies a structural delta in place.
+ *
+ * Removals run first so the insertion point of an added row can be found among
+ * the rows that actually survived.
+ *
+ * @param {object} context
+ * @param {{ added: string[], removed: string[], reorder: boolean }} delta
+ * @param {string[]} modelKeys
+ * @returns {Promise<void>}
+ */
+async function syncStructuralDelta(context, delta, modelKeys) {
+    const { state } = context;
+    const list = state.listElement;
+
+    for (const key of delta.removed) {
+        const node = state.nodeByKey.get(key);
+        node?.remove();
+        state.nodeByKey.delete(key);
+        state.previousByKey.delete(key);
+        state.rowSignatures.delete(key);
+    }
+
+    if (delta.added.length > 0) {
+        const { headNodes, nextRows } = await buildRows(context, delta.added);
+        const built = nextRows.map(row => row.key);
+        const missing = delta.added.filter(key => !built.includes(key));
+        if (missing.length > 0) {
+            throw new RowParseError(`Upstream did not render the requested row(s): ${missing.join(', ')}`);
+        }
+        syncHeadNodes(list, headNodes);
+
+        // One node at a time, and a slice boundary every few milliseconds: an
+        // import that adds hundreds of prompts fills in over a couple of frames
+        // instead of freezing the panel until the last one is in place.
+        await runSliced(nextRows, row => {
+            const node = createNodeFromHtml(row.html);
+            const following = nextKnownRowNode(state, modelKeys, row.key);
+            if (following) {
+                following.before(node);
+            } else {
+                list.append(node);
+            }
+            state.nodeByKey.set(row.key, node);
+            state.previousByKey.set(row.key, row);
+        });
+    }
+
+    const moved = delta.reorder ? reorderRows(state, modelKeys) : 0;
+
+    state.lastStats = {
+        created: delta.added.length,
+        updated: 0,
+        tokens: 0,
+        removed: delta.removed.length,
+        moved,
+        rebuilt: 0,
+        replaced: 0,
+    };
+    state.lastPath = 'local';
+}
+
+/**
+ * Puts the existing row nodes into model order, moving only the ones that are
+ * out of place. Walks backwards so every node is inserted in front of a
+ * reference that is already where it belongs.
+ *
+ * @param {object} state
+ * @param {string[]} modelKeys
+ * @returns {number} How many nodes had to be moved.
+ */
+function reorderRows(state, modelKeys) {
+    const list = state.listElement;
+    let moves = 0;
+    /** @type {Element | null} */
+    let following = null;
+
+    for (let index = modelKeys.length - 1; index >= 0; index -= 1) {
+        const node = state.nodeByKey.get(modelKeys[index]);
+        if (!node) {
+            continue;
+        }
+        if (following !== null && node.nextElementSibling !== following) {
+            list.insertBefore(node, following);
+            moves += 1;
+        }
+        following = node;
+    }
+
+    return moves;
+}
+
+/**
+ * @param {object} state
+ * @param {string[]} modelKeys
+ * @param {string} key The row that was just inserted.
+ * @returns {Element | null} The next row that is already on screen, if any.
+ */
+function nextKnownRowNode(state, modelKeys, key) {
+    const position = modelKeys.indexOf(key);
+    for (let index = position + 1; index < modelKeys.length; index += 1) {
+        const node = state.nodeByKey.get(modelKeys[index]);
+        if (node) {
+            return node;
+        }
+    }
+    return null;
+}
+
+/**
  * @param {object} context
  * @returns {Promise<void>}
  */
@@ -946,9 +1339,12 @@ async function syncPanelNow(context) {
     const needsStructure = !state.listElement
         || !container.contains(state.listElement)
         || state.errorSignature !== instance.error
-        || state.structureSignature !== structureSignature(instance);
+        || state.structureSignature !== containerSignature(instance);
 
     const scroll = preserveScroll(container);
+    // Whether the row set itself moves. Only then can the scroller clamp its
+    // offset, and only then is restoring it worth a forced layout.
+    let rowsTouched = needsStructure;
     try {
         if (needsStructure) {
             await rebuildStructure(context);
@@ -960,22 +1356,40 @@ async function syncPanelNow(context) {
 
         const modelKeys = promptModelKeys(instance);
         const live = rowNodes(state.listElement);
-        const liveKeys = live.map(node => node.getAttribute('data-pm-identifier'));
-        const rowsIntact = liveKeys.length === modelKeys.length
-            && liveKeys.every((key, index) => key === modelKeys[index])
+        // The list is ours as long as it still holds exactly the nodes this
+        // extension put there. Someone else's node means the keyed plan is built
+        // on sand and the answer is a full rebuild — but a row set that merely
+        // changed in the *model* is not that case: an added or removed prompt is
+        // reconciled as a delta below.
+        const rowsIntact = live.length === state.nodeByKey.size
             && live.every(node => state.nodeByKey.get(node.getAttribute('data-pm-identifier')) === node);
 
-        const decision = rowsIntact
-            ? choosePath(context, modelKeys)
-            : { path: /** @type {'full'} */ ('full'), keys: modelKeys };
+        /** @type {string[] | null} */
+        let renderedKeys = null;
+        const delta = rowsIntact ? planStructuralDelta(context, modelKeys, live) : null;
 
-        if (decision.path === 'chrome') {
+        const decision = delta
+            ? { path: /** @type {'local'} */ ('local'), keys: delta.added }
+            : rowsIntact
+                ? choosePath(context, modelKeys)
+                : { path: /** @type {'full'} */ ('full'), keys: modelKeys };
+
+        if (delta) {
+            rowsTouched = true;
+            await syncStructuralDelta(context, delta, modelKeys);
+            // Only the inserted rows are new; the survivors kept their
+            // fingerprints and the departed ones were dropped with their nodes.
+            renderedKeys = delta.added;
+        } else if (decision.path === 'chrome') {
             // No row can look different, so only the numbers have to be written.
-            syncTokensOnly(context);
+            syncTokensOnly(context, live);
         } else {
             const keys = decision.path === 'local' ? locallyRenderableKeys(state, decision.keys) : [];
             const narrowed = keys.length > 0 && keys.length < modelKeys.length ? keys : null;
+            // 'local' and 'full' both hand rows to the DOM layer.
+            rowsTouched = true;
             await syncRows(context, narrowed);
+            renderedKeys = narrowed;
         }
 
         if (state.lastPath !== 'tokens') {
@@ -983,15 +1397,26 @@ async function syncPanelNow(context) {
             // let the presentation decide whether they have to be hidden.
             state.placeholderApplied = false;
             applyStalePresentation(context);
-            captureRowSignatures(context);
+            await captureRowSignatures(context, renderedKeys);
+        }
+
+        // The select is checked on every sync, not only on the ones that rebuilt a
+        // row: the comparison is a few hundred string joins (0.1 ms), and a stale
+        // dropdown that waits for the next structural change is worse than paying
+        // for it. A sync that did not need it repairs a select an earlier one missed.
+        if (state.selectSignature !== selectSignature(instance)) {
+            await refreshSelectOptions(context);
         }
         updateTotal(context);
         announcePath(context);
+        // Every path above leaves the list in model order, so the next sync can
+        // answer "did the order move" without reading the list at all.
+        state.appliedModelKeys = modelKeys;
     } finally {
         // The sync may have emptied the list while it built the new markup, which
         // makes the browser clamp the offset to the top. Restore it here instead of
         // letting the panel jump away from the row the user just touched.
-        scroll.end();
+        scroll.end(rowsTouched);
     }
 }
 
@@ -1043,6 +1468,8 @@ export async function fullRebuild(context) {
     state.nodeByKey = new Map();
     state.previousByKey = new Map();
     state.structureSignature = null;
+    state.selectSignature = null;
+    state.appliedModelKeys = null;
     state.errorSignature = undefined;
     state.placeholderApplied = false;
     try {
@@ -1050,6 +1477,8 @@ export async function fullRebuild(context) {
         await originals.renderPromptManagerListItems.call(instance);
         instance.makeDraggable();
     } finally {
-        scroll.end();
+        // This is the path that runs when the extension steps aside, so it settles
+        // the offset immediately instead of leaving it to the next frame.
+        scroll.endNow();
     }
 }

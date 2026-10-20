@@ -1,0 +1,21 @@
+/*
+ * The variables TauriTavern injects at runtime from the user's theme.
+ *
+ * `src/style.css` consumes them but does not define them:
+ *   --SmartThemeBlurStrength: calc(var(--blurStrength) * 1px)   (style.css:80)
+ * Without these values every `blur(var(--SmartThemeBlurStrength))` is invalid at
+ * computed-value time, so the bench would silently measure a page with no blur
+ * at all. Values are the ones TT ships in `default/content/themes/Azure.json`
+ * (blur_strength 11, shadow_width 5) — a real default, not a tuned-up one.
+ */
+html {
+    --blurStrength: 11;
+    --shadowWidth: 5;
+    --SmartThemeBlurTintColor: rgba(23, 30, 33, 0.61);
+    --SmartThemeChatTintColor: rgba(23, 23, 23, 0);
+    --SmartThemeShadowColor: rgba(0, 0, 0, 1);
+    --SmartThemeBodyColor: rgba(171, 198, 223, 1);
+    --SmartThemeBorderColor: rgba(0, 0, 0, 0.5);
+    --SmartThemeQuoteColor: rgba(111, 133, 253, 1);
+    --SmartThemeFontSize: 16px;
+}

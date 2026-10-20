@@ -12,7 +12,8 @@ import { promptManager as livePromptManager } from '/scripts/openai.js';
 import { getTokenizerModel } from '/scripts/tokenizers.js';
 
 import { createGestureGate } from './gesture.js';
-import { getContext } from './host.js';
+import { createInputGate } from './input.js';
+import { getContext, isMobileHost } from './host.js';
 import { createPresetWindowCoalescer } from './patches/preset-window.js';
 import { createPromptManagerPatch } from './patches/prompt-manager.js';
 import { createPanelState, fullRebuild, syncPanel } from './render/panel.js';
@@ -59,7 +60,7 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
     const cache = createTokenCountCache({
         settings,
         diagnostics,
-        namespace: 'preset-lite',
+        namespace: 'tavern-optimize',
         resolveModel: getTokenizerModel,
         metrics,
     });
@@ -147,8 +148,25 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
      * promise "no repaint during a fling" checkable: nothing else in this module
      * calls the renderer directly.
      */
+    /**
+     * The chat field has its own hold, for a different reason than a gesture.
+     *
+     * While an IME is composing, the field changes value with every candidate and
+     * a DOM write elsewhere can move the caret or drop the composition. The panel
+     * therefore waits for the composition to end, and for a moment after ordinary
+     * typing, instead of writing into the middle of a sentence. What the hold
+     * delays is bookkeeping; nothing the user is typing depends on it.
+     */
+    const inputGate = createInputGate({
+        diagnostics,
+        onIdle: reason => {
+            panelGate.flush(reason);
+            scheduler.wake(reason);
+        },
+    });
+
     const panelGate = createGestureGate({
-        isHeld: () => isGestureHeld(),
+        isHeld: () => isGestureHeld() || inputGate.isHeld(),
         diagnostics,
     });
 
@@ -316,12 +334,58 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
         scheduler.noteInteraction(type);
     }
 
+    /**
+     * @param {EventTarget | null | undefined} target
+     * @returns {boolean} True when the event came from something the user types into.
+     */
+    function isEditableTarget(target) {
+        if (!(target instanceof Element)) {
+            return false;
+        }
+        const tag = target.tagName;
+        if (tag === 'TEXTAREA' || tag === 'INPUT') {
+            return true;
+        }
+        return /** @type {any} */ (target).isContentEditable === true
+            || target.closest('[contenteditable="true"]') !== null;
+    }
+
+    /**
+     * @param {any} event
+     */
+    function onCompositionStart(event) {
+        if (!settings.get().enabled || !isEditableTarget(event?.target)) {
+            return;
+        }
+        inputGate.beginComposition();
+    }
+
+    /**
+     * @param {any} event
+     */
+    function onCompositionEnd(event) {
+        if (!isEditableTarget(event?.target)) {
+            return;
+        }
+        inputGate.endComposition();
+    }
+
+    /**
+     * @param {any} event
+     */
+    function onInput(event) {
+        if (!settings.get().enabled || !isEditableTarget(event?.target)) {
+            return;
+        }
+        inputGate.noteInput();
+    }
+
     function setSorting(next) {
         if (sorting === next) {
             return;
         }
         sorting = next;
-        document.body?.classList.toggle('tt-pl-dragging', next);
+        document.body?.classList.toggle('tt-to-dragging', next);
         if (next) {
             scheduler.noteInteraction('drag');
         } else {
@@ -488,14 +552,27 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
             disposers.push(() => document.removeEventListener(type, onUserInteraction, { capture: true }));
         }
 
+        // The chat field. `input` fires per keystroke; the gate folds a burst into
+        // one frame and holds the panel until the user stops typing.
+        /** @type {Array<[string, (event: any) => void]>} */
+        const fieldEvents = [
+            ['compositionstart', onCompositionStart],
+            ['compositionend', onCompositionEnd],
+            ['input', onInput],
+        ];
+        for (const [type, handler] of fieldEvents) {
+            document.addEventListener(type, handler, { passive: true, capture: true });
+            disposers.push(() => document.removeEventListener(type, handler, { capture: true }));
+        }
+
         if (jQuery?.fn?.on) {
             const onSortStart = () => setSorting(true);
             const onSortEnd = () => setSorting(false);
-            jQuery(document).on('sortstart.ttPresetLite sortbegin.ttPresetLite', onSortStart);
-            jQuery(document).on('sortstop.ttPresetLite sortend.ttPresetLite', onSortEnd);
+            jQuery(document).on('sortstart.ttTavernOptimize sortbegin.ttTavernOptimize', onSortStart);
+            jQuery(document).on('sortstop.ttTavernOptimize sortend.ttTavernOptimize', onSortEnd);
             disposers.push(() => {
-                jQuery(document).off('sortstart.ttPresetLite sortbegin.ttPresetLite', onSortStart);
-                jQuery(document).off('sortstop.ttPresetLite sortend.ttPresetLite', onSortEnd);
+                jQuery(document).off('sortstart.ttTavernOptimize sortbegin.ttTavernOptimize', onSortStart);
+                jQuery(document).off('sortstop.ttTavernOptimize sortend.ttTavernOptimize', onSortEnd);
             });
         }
 
@@ -566,14 +643,31 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
             scrollHoldTimer = null;
         }
         panelGate.clear();
+        inputGate.clear();
         if (settingsSyncTimer !== null) {
             clearTimeout(settingsSyncTimer);
             settingsSyncTimer = null;
         }
     }
 
+    /**
+     * Publishes the host platform to CSS.
+     *
+     * The paint-degradation layer in `style.css` is scoped to
+     * `body.tt-to-on.tt-to-mobile`, so this class is the only thing that decides
+     * whether an Android/iOS device gets the cheap paint path. A missing host
+     * identity is reported rather than silently treated as desktop.
+     */
+    function applyHostClasses() {
+        const mobile = isMobileHost();
+        document.body?.classList.toggle('tt-to-mobile', mobile);
+        if (!mobile && !globalThis.__TAURITAVERN_HOST__) {
+            diagnostics.degrade('paint-downgrade', 'host identity is missing, so the paint layer stays off');
+        }
+    }
+
     const unsubscribeSettings = settings.subscribe(() => {
-        document.body?.classList.toggle('tt-pl-on', settings.get().enabled);
+        document.body?.classList.toggle('tt-to-on', settings.get().enabled);
         if (!settings.get().enabled) {
             presetWindow.flushNow('disabled');
             // Write the real numbers back before upstream takes over again.
@@ -603,7 +697,8 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
                 throw new Error('PromptManager renderer references were not captured');
             }
             patch.patchExistingInstance();
-            document.body?.classList.toggle('tt-pl-on', settings.get().enabled);
+            document.body?.classList.toggle('tt-to-on', settings.get().enabled);
+            applyHostClasses();
 
             if (jQuery?.fn?.trigger) {
                 presetWindow.install(jQuery);
@@ -617,7 +712,7 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
             void cache.ensureLoaded();
             requestPanelSync('start');
             scheduler.schedule('start');
-            diagnostics.info(`Preset Lite ${VERSION} started (${identity.folder})`);
+            diagnostics.info(`Tavern Optimize ${VERSION} started (${identity.folder})`);
         },
 
         stop() {
@@ -628,10 +723,11 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
             scheduler.stop();
             presetWindow.uninstall();
             patch.uninstall();
-            document.body?.classList.remove('tt-pl-dragging');
-            document.body?.classList.remove('tt-pl-on');
+            document.body?.classList.remove('tt-to-dragging');
+            document.body?.classList.remove('tt-to-mobile');
+            document.body?.classList.remove('tt-to-on');
             hooks.onStop?.();
-            diagnostics.info('Preset Lite stopped');
+            diagnostics.info('Tavern Optimize stopped');
         },
 
         requestPanelSync,
