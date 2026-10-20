@@ -38,13 +38,17 @@ line per path, once per session, so the host's log viewer shows whether the fast
 | Path | When | What it costs |
 | --- | --- | --- |
 | `tokens` | nothing but the numbers moved (a recount finished, or a prompt body was edited) | one text node per changed cell; upstream is not called |
-| `local` | one or a few rows changed (toggle, rename, reorder of a single entry) | upstream renders *those* rows only |
-| `full` | the row set moved (add, delete, duplicate, character change, error change) | upstream renders the whole list, reconciled by `data-pm-identifier` |
+| `local` | one or a few rows changed, **including** a row being added, deleted or duplicated | upstream renders *those* rows only; the rest are moved, never rebuilt |
+| `full` | the list on screen is not the one this extension built (character change, error change, first render) | upstream renders the whole list, reconciled by `data-pm-identifier` |
 
-Measured in Chromium at 200 prompts (`npm run test:browser`): `tokens` 5 ms, `local` 8 ms, `full`
-~100 ms per sync — against ~350 ms for a full upstream rebuild of the same list. Editing a prompt
-body and a finished recount both stay on `tokens`, which is what makes typing in the editor and
-watching the numbers settle feel free.
+Measured in Chromium at 200 prompts (`npm run test:browser`): `tokens` 2.5–5 ms, `local` 3–9 ms per
+sync. Adding or deleting a prompt is a `local` sync that parses **one** row; before, it re-rendered
+the list and parsed all 200. Editing a prompt body and a finished recount both stay on `tokens`, which
+is what makes typing in the editor and watching the numbers settle feel free.
+
+The footer's "insert prompt" select is the one piece of chrome that follows the list, so it is tracked
+on its own and only the options that actually changed are adopted — replacing all 200 `<option>` nodes
+cost 27 ms for a single added prompt.
 
 ### Nothing repaints during a gesture
 
@@ -61,6 +65,33 @@ The scroll range is also kept honest: the height reserved for a not-yet-painted 
 a real row (`--tt-to-row-height`, kept up to date by a `ResizeObserver`), so flinging cannot make the
 scrollbar or the range drift. The browser test measures that drift at 0 px; with a fixed placeholder
 it was 1552 px at 200 rows, which is exactly the "blank flash then jump" users report.
+
+### Nothing is written while you type
+
+An IME composition is the one moment where a DOM write can lose a sentence: the field changes value
+with every candidate, and a node replaced under the caret drops the composition. So the panel holds
+off for the *whole* composition — not a fixed timeout — and for a moment after ordinary keystrokes,
+then applies the waiting work once (`src/input.js`). Keystrokes are folded into one frame's worth of
+bookkeeping, so a fast typist cannot outrun the queue. The browser test asserts 10 sync requests
+during a composition produce zero DOM writes, are reported as deferred, and run when it ends.
+
+### Long lists are built across several tasks
+
+Assembling and parsing rows is work nobody is waiting for, so it is sliced: the builder yields once
+the current slice has used 8 ms, through `scheduler.yield` where the host has it, then
+`scheduler.postTask`, then `setTimeout(0)` (`src/perf/slicer.js`). A 400-prompt import no longer
+holds the main thread in one task; a short list never yields at all, so the fast path pays one clock
+read per row.
+
+### The mobile paint layer
+
+On a WebView, a `backdrop-filter` is rasterised by re-rendering the region behind it, and TT's chat
+carries a blurred bar plus a blurred halo on every glyph. Only on mobile, and only while the master
+switch is on, the extension removes those blurs and the per-glyph halo, trades large blur shadows for
+a hairline drawn inside the element's own box, and narrows transitions to `transform`/`opacity` so the
+compositor can run them without the main thread. Measured against TT's own stylesheet in
+`tests/browser/paint-bench`: 40 ms per scrolled frame before, 17 ms after. Desktop is deliberately
+untouched — its GPU draws the same effects cheaply.
 
 ## Requirements
 
@@ -176,9 +207,10 @@ keep showing `-`.
 
 ```
 npm install          # devDependencies: typescript, happy-dom, ws
-npm test             # 99 tests: pure logic, panel DOM reconciliation, patch layer, runtime smoke
+npm test             # 116 tests: pure logic, panel DOM reconciliation, patch layer, runtime smoke
 npm run typecheck    # tsc --noEmit with checkJs (JSDoc types, no build step)
-npm run test:browser # real Chromium: render paths, fling, blank frames, structural churn
+npm run test:browser # real Chromium: render paths, fling, blank frames, structural churn,
+                     #   IME composition, long-list slicing, footer select
 npm run test:browser:quick   # same, fewer rows and repetitions
 ```
 
