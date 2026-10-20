@@ -20,6 +20,7 @@ const LEGACY_SETTINGS_NAMESPACE = 'preset-lite';
  * @property {number} idleDelayMs Minimum quiet time after the last interaction before a recount may start.
  * @property {number} idleTimeoutMs Idle callback fallback budget.
  * @property {boolean} deferDuringScroll Never start a recount while scrolling or dragging rows.
+ * @property {boolean} mobilePaintLayer Drop mobile-only paint costs (blur, glyph halo, large shadows, non-composited transitions).
  * @property {boolean} coalescePresetEvents Coalesce upstream `input` events fired by the preset-apply loop.
  * @property {boolean} reportPresetConflicts Report preset fields a replayed handler changed afterwards.
  * @property {boolean} persistentTokenCache Persist token counts across sessions.
@@ -38,6 +39,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
     idleTimeoutMs: 3000,
     /** Never start a recount while the user is scrolling or dragging rows. */
     deferDuringScroll: true,
+    /** Drop mobile-only paint costs; no effect on a desktop host. */
+    mobilePaintLayer: true,
     /** Coalesce upstream `input` events fired by the preset-apply loop. */
     coalescePresetEvents: true,
     /** Report preset fields whose value a coalesced handler changed afterwards. */
@@ -57,6 +60,7 @@ const NUMBER_LIMITS = Object.freeze({
 const BOOLEAN_KEYS = Object.freeze([
     'enabled',
     'keepStaleNumbers',
+    'mobilePaintLayer',
     'deferDuringScroll',
     'coalescePresetEvents',
     'reportPresetConflicts',

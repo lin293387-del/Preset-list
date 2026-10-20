@@ -123,6 +123,7 @@ Uninstall = disable or delete the extension; no data outside the extension store
 | --- | --- | --- |
 | Enable Tavern Optimize | on | Master switch. Off restores stock rendering instantly. |
 | Keep last known token numbers | on | While a recount is pending the numbers stay visible (dimmed). Off shows `-` like upstream. |
+| Mobile paint layer (blur, shadows, transitions) | on | Phone only. Drops the blurred bars, the per-glyph text halo and the large blur shadows, and narrows transitions to `transform`/`opacity`. Takes effect immediately; no effect on desktop. |
 | Coalesce preset apply events | on | Merges the preset-apply `input` storm and replays it once at the end of the window. Fields the preset did not move are skipped, and a `change` event re-fired for an unmoved select is dropped. Everything else keeps its original timing. |
 | Report preset field conflicts | on | If a replayed handler rewrites a field the preset just wrote, that field is listed in the status area instead of being silently swallowed. |
 | Persist the token cache | on | Counts are cached per model + content, so returning to a preset (or restarting) is instant. |

@@ -75,3 +75,19 @@ test('settings stored under the pre-rename namespace are adopted, not discarded'
     assert.equal(settings.get().coalescePresetEvents, false);
     assert.deepEqual(context.extensionSettings['tavern-optimize'], settings.get(), 'state now lives under the new namespace');
 });
+
+test('the mobile paint layer is a switch, on by default', () => {
+    const context = { extensionSettings: {}, saveSettingsDebounced() {} };
+    const settings = createSettings(context);
+
+    assert.equal(settings.get().mobilePaintLayer, true, 'a phone gets the paint layer without opting in');
+
+    settings.update({ mobilePaintLayer: false });
+    assert.equal(settings.get().mobilePaintLayer, false);
+    assert.equal(context.extensionSettings['tavern-optimize'].mobilePaintLayer, false, 'the choice is persisted');
+
+    // Anything that is not a boolean falls back to the default instead of turning
+    // a look-for-speed trade on or off by accident.
+    settings.update({ mobilePaintLayer: 'off' });
+    assert.equal(settings.get().mobilePaintLayer, true);
+});

@@ -1,6 +1,6 @@
 {
   "name": "tavern-optimize",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "type": "module",
   "description": "Tavern Optimize: a TauriTavern extension for a lighter, smoother frontend. Incremental prompt-row rendering, idle token recounts and coalesced preset apply events today; global interaction-cost work in progress.",

@@ -14,6 +14,7 @@ const NOTICE_MS = 4000;
 const CONTROLS = Object.freeze({
     enabled: 'tavern_optimize_enabled',
     keepStaleNumbers: 'tavern_optimize_keep_stale',
+    mobilePaintLayer: 'tavern_optimize_mobile_paint',
     coalescePresetEvents: 'tavern_optimize_coalesce',
     reportPresetConflicts: 'tavern_optimize_report_conflicts',
     persistentTokenCache: 'tavern_optimize_persist_cache',

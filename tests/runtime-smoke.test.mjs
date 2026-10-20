@@ -431,6 +431,33 @@ describe('runtime smoke test', { skip: Window ? false : 'happy-dom is not instal
         }
     });
 
+    test('the mobile paint layer follows the switch, live', async () => {
+        // The layer is a look-for-speed trade, so it is the user's call as well as
+        // the platform's: present on a mobile host, gone the moment the switch is
+        // off, back the moment it is on again — and always off on desktop.
+        const host = /** @type {any} */ (globalThis);
+        const previousHost = host.__TAURITAVERN_HOST__;
+        host.__TAURITAVERN_HOST__ = { kind: 'mobile' };
+
+        const { runtime } = await bootRuntime();
+        try {
+            assert.equal(document.body.classList.contains('tt-to-mobile'), true, 'mobile host gets the layer');
+
+            runtime.settings.update({ mobilePaintLayer: false });
+            assert.equal(document.body.classList.contains('tt-to-mobile'), false, 'the switch removes it without a reload');
+
+            runtime.settings.update({ mobilePaintLayer: true });
+            assert.equal(document.body.classList.contains('tt-to-mobile'), true, 'and puts it back');
+        } finally {
+            runtime.stop();
+            if (previousHost === undefined) {
+                delete host.__TAURITAVERN_HOST__;
+            } else {
+                host.__TAURITAVERN_HOST__ = previousHost;
+            }
+        }
+    });
+
     test('stop restores the upstream prototype and removes listeners', async () => {
         const { runtime, app, instance, PromptManager, openai } = await bootRuntime();
         const prototypeRender = PromptManager.prototype.render;

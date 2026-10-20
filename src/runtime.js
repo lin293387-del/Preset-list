@@ -659,15 +659,21 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
      * identity is reported rather than silently treated as desktop.
      */
     function applyHostClasses() {
-        const mobile = isMobileHost();
+        const onMobileHost = isMobileHost();
+        // The paint layer is a look-for-speed trade, so it is the user's call as well
+        // as the platform's: mobile by default, and off the moment the switch is off.
+        const mobile = onMobileHost && settings.get().mobilePaintLayer;
         document.body?.classList.toggle('tt-to-mobile', mobile);
-        if (!mobile && !globalThis.__TAURITAVERN_HOST__) {
+        if (!onMobileHost && !globalThis.__TAURITAVERN_HOST__) {
             diagnostics.degrade('paint-downgrade', 'host identity is missing, so the paint layer stays off');
         }
     }
 
     const unsubscribeSettings = settings.subscribe(() => {
         document.body?.classList.toggle('tt-to-on', settings.get().enabled);
+        // Flipping the paint switch takes effect immediately: it is one body class,
+        // so nothing has to be re-rendered or reloaded.
+        applyHostClasses();
         if (!settings.get().enabled) {
             presetWindow.flushNow('disabled');
             // Write the real numbers back before upstream takes over again.

@@ -25,6 +25,16 @@
                 </span>
             </div>
 
+            <label class="checkbox_label" for="tavern_optimize_mobile_paint">
+                <input type="checkbox" id="tavern_optimize_mobile_paint">
+                <span data-i18n="Mobile paint layer (blur, shadows, transitions)">Mobile paint layer (blur, shadows, transitions)</span>
+            </label>
+            <div class="toggle-description justifyLeft">
+                <span data-i18n="On a phone the chat is repainted under every scroll, and each blurred bar, per-glyph halo and large shadow is rasterised again with it. This drops them and keeps transitions to transform and opacity. No effect on desktop, where the same effects are cheap.">
+                    On a phone the chat is repainted under every scroll, and each blurred bar, per-glyph halo and large shadow is rasterised again with it. This drops them and keeps transitions to transform and opacity. No effect on desktop, where the same effects are cheap.
+                </span>
+            </div>
+
             <label class="checkbox_label" for="tavern_optimize_coalesce">
                 <input type="checkbox" id="tavern_optimize_coalesce">
                 <span data-i18n="Coalesce preset apply events">Coalesce preset apply events</span>

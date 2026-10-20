@@ -12,5 +12,7 @@
     "Stores token counts per model and content, so switching back to a preset is instant even after a restart.": "按模型与内容缓存 token 计数，重启后切回同一个预设也能立刻显示精确值。",
     "Recount delay (ms)": "重算延迟（毫秒）",
     "Token cache entries": "token 缓存条目上限",
-    "Clear token cache": "清空 token 缓存"
+    "Clear token cache": "清空 token 缓存",
+    "Mobile paint layer (blur, shadows, transitions)": "移动端绘制降级（模糊、阴影、过渡）",
+    "On a phone the chat is repainted under every scroll, and each blurred bar, per-glyph halo and large shadow is rasterised again with it. This drops them and keeps transitions to transform and opacity. No effect on desktop, where the same effects are cheap.": "手机上每次滚动都会重绘聊天区，每条模糊栏、逐字光晕和大阴影都会跟着重新栅格化。开启后会去掉这些效果，并把过渡限制在 transform 与 opacity 上。桌面端不受影响——那里同样的效果开销很低。"
 }
