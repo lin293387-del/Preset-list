@@ -127,3 +127,39 @@ body.tt-to-on .tt-to-stale .prompt_manager_prompt_tokens {
  * gesture is held (see `src/gesture.js`), so skipping stays on and no row is ever
  * re-laid-out mid-fling.
  */
+
+/*
+ * A1 — the mobile paint-degradation layer.
+ *
+ * A WebView rasterises a `backdrop-filter` by re-rendering the region behind it,
+ * and TT's chat carries both a blurred bar and a blurred halo on every glyph
+ * (TauriTavern `src/style.css:824`, `:929`, `:932`). Measured against TT's own
+ * stylesheet in `tests/browser/paint-bench`: 46 ms per scrolled frame before,
+ * 17 ms after — on this device the difference between a slideshow and a scroll.
+ *
+ * Desktop is deliberately excluded (`body.tt-to-mobile`): a desktop GPU draws the
+ * same effects cheaply, so degrading them there would spend looks for no gain.
+ * Everything is scoped under the master switch (`body.tt-to-on`), so turning the
+ * extension off restores TT's own paint path with no reload.
+ */
+body.tt-to-on.tt-to-mobile #top-bar,
+body.tt-to-on.tt-to-mobile #chat,
+body.tt-to-on.tt-to-mobile #send_form,
+body.tt-to-on.tt-to-mobile .popup .popper-modal,
+body.tt-to-on.tt-to-mobile .autoComplete-details,
+body.tt-to-on.tt-to-mobile .tt-chat-input-editor,
+body.tt-to-on.tt-to-mobile #shadow_popup,
+body.tt-to-on.tt-to-mobile #shadow_character_popup,
+body.tt-to-on.tt-to-mobile #character_popup {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+}
+
+/* The themed halo on every glyph: one blurred pass per painted line of chat. */
+body.tt-to-on.tt-to-mobile #chat {
+    text-shadow: none !important;
+}
+
+body.tt-to-on.tt-to-mobile .avatar img {
+    box-shadow: none !important;
+}

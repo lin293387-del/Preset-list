@@ -51,8 +51,10 @@ const LOCAL_FILES = {
     '/theme.css': ['theme.css', 'text/css; charset=utf-8'],
     '/bench.css': ['bench.css', 'text/css; charset=utf-8'],
     '/bench.js': ['bench.js', 'text/javascript; charset=utf-8'],
-    '/degrade.css': ['degrade.css', 'text/css; charset=utf-8'],
 };
+
+/** The extension's shipped stylesheet, so the second pass measures real code. */
+const EXT_STYLE = path.resolve(HERE, '../../../style.css');
 
 async function findChrome() {
     for (const candidate of CANDIDATES) {
@@ -77,11 +79,16 @@ async function findChrome() {
  */
 async function startServer() {
     const style = await fs.readFile(TT_STYLE, 'utf8');
+    const extensionStyle = await fs.readFile(EXT_STYLE, 'utf8');
 
     const server = http.createServer(async (request, response) => {
         const url = new URL(request.url ?? '/', 'http://localhost');
         if (url.pathname === '/tt-style.css') {
             response.writeHead(200, { 'content-type': 'text/css; charset=utf-8' }).end(style);
+            return;
+        }
+        if (url.pathname === '/ext-style.css') {
+            response.writeHead(200, { 'content-type': 'text/css; charset=utf-8' }).end(extensionStyle);
             return;
         }
         const local = LOCAL_FILES[url.pathname];
@@ -202,26 +209,53 @@ async function main() {
 
         const plain = await scrollPass(evaluate, 'tt-css');
 
-        const degradeCss = await fs.readFile(path.join(HERE, 'degrade.css'), 'utf8');
-        await evaluate(`return window.__benchInject(${JSON.stringify(degradeCss)});`);
-        await scrollPass(evaluate, 'degraded warmup');
-        const degraded = await scrollPass(evaluate, 'degraded');
+        // The shipped layer, applied exactly the way the runtime applies it: the
+        // master switch and the mobile host class on <body>, then the stylesheet.
+        const extensionCss = await fs.readFile(EXT_STYLE, 'utf8');
+        await evaluate(`document.body.classList.add('tt-to-on', 'tt-to-mobile'); return window.__benchInject(${JSON.stringify(extensionCss)});`);
+        await scrollPass(evaluate, 'optimize warmup');
+
+        // A layer that "becomes fast" by hiding the chat is not a layer. The
+        // surface must still be there, with text and a top bar, after injection.
+        const structure = await evaluate(`
+            const first = document.querySelector('#chat .mes_text');
+            const bar = document.querySelector('#top-bar');
+            return {
+                rows: document.querySelectorAll('#chat .mes').length,
+                textLength: (first?.textContent ?? '').length,
+                barHeight: bar?.offsetHeight ?? 0,
+            };
+        `);
+        if (structure.rows < ROWS || structure.textLength < 20 || structure.barHeight < 20) {
+            throw new Error(`the paint layer removed the content instead of degrading its cost: ${JSON.stringify(structure)}`);
+        }
+
+        const optimized = await scrollPass(evaluate, 'optimize');
 
         const line = (label, s) => `${label.padEnd(10)} frames ${String(s.frames).padStart(4)}  median-frame ${s.median.toFixed(1).padStart(6)} ms  p95 ${s.p95.toFixed(1).padStart(6)} ms  worst ${s.worst.toFixed(1).padStart(6)} ms`;
         console.log(`\nrows=${ROWS} steps=${STEPS} tt=${TT_SRC} gpu=${process.env.BENCH_GPU ? 'on' : 'swiftshader'}\n`);
         console.log(line('tt-css', plain));
-        console.log(line('degraded', degraded));
+        console.log(line('optimize', optimized));
 
-        const ratio = degraded.median > 0 ? plain.median / degraded.median : 0;
-        console.log(`\nsensitivity ${ratio.toFixed(2)}x  (the bench must separate the two worlds by ${MIN_SENSITIVITY}x)`);
+        const ratio = optimized.median > 0 ? plain.median / optimized.median : 0;
+        console.log(`\nsensitivity ${ratio.toFixed(2)}x  (the shipped layer must separate the two worlds by ${MIN_SENSITIVITY}x)`);
 
         if (!(ratio >= MIN_SENSITIVITY)) {
-            throw new Error(`bench is blind: dropping the blur/shadows changed the median frame by only ${ratio.toFixed(2)}x`);
+            throw new Error(`the paint layer is ineffective: it moved the median frame by only ${ratio.toFixed(2)}x`);
         }
     } finally {
         child.kill('SIGKILL');
+        // Wait for the browser to actually go away before deleting its profile:
+        // it keeps writing to the directory for a moment after the signal.
+        await new Promise(resolve => {
+            const timer = setTimeout(resolve, 3000);
+            child.once('exit', () => {
+                clearTimeout(timer);
+                resolve(undefined);
+            });
+        });
         await server.close();
-        await fs.rm(profileDir, { recursive: true, force: true });
+        await fs.rm(profileDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(() => {});
     }
 }
 

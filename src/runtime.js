@@ -12,7 +12,7 @@ import { promptManager as livePromptManager } from '/scripts/openai.js';
 import { getTokenizerModel } from '/scripts/tokenizers.js';
 
 import { createGestureGate } from './gesture.js';
-import { getContext } from './host.js';
+import { getContext, isMobileHost } from './host.js';
 import { createPresetWindowCoalescer } from './patches/preset-window.js';
 import { createPromptManagerPatch } from './patches/prompt-manager.js';
 import { createPanelState, fullRebuild, syncPanel } from './render/panel.js';
@@ -572,6 +572,22 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
         }
     }
 
+    /**
+     * Publishes the host platform to CSS.
+     *
+     * The paint-degradation layer in `style.css` is scoped to
+     * `body.tt-to-on.tt-to-mobile`, so this class is the only thing that decides
+     * whether an Android/iOS device gets the cheap paint path. A missing host
+     * identity is reported rather than silently treated as desktop.
+     */
+    function applyHostClasses() {
+        const mobile = isMobileHost();
+        document.body?.classList.toggle('tt-to-mobile', mobile);
+        if (!mobile && !globalThis.__TAURITAVERN_HOST__) {
+            diagnostics.degrade('paint-downgrade', 'host identity is missing, so the paint layer stays off');
+        }
+    }
+
     const unsubscribeSettings = settings.subscribe(() => {
         document.body?.classList.toggle('tt-to-on', settings.get().enabled);
         if (!settings.get().enabled) {
@@ -604,6 +620,7 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
             }
             patch.patchExistingInstance();
             document.body?.classList.toggle('tt-to-on', settings.get().enabled);
+            applyHostClasses();
 
             if (jQuery?.fn?.trigger) {
                 presetWindow.install(jQuery);
@@ -629,6 +646,7 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
             presetWindow.uninstall();
             patch.uninstall();
             document.body?.classList.remove('tt-to-dragging');
+            document.body?.classList.remove('tt-to-mobile');
             document.body?.classList.remove('tt-to-on');
             hooks.onStop?.();
             diagnostics.info('Tavern Optimize stopped');
