@@ -440,6 +440,36 @@ async function run() {
         console.log(`\nstructural churn (8x delete+duplicate, frame-sampled)  frames ${structural.frames}  empty ${structural.emptyFrames}  minRows ${structural.minRows}  final ${structural.finalRows}`);
         results.push({ name: 'structural', ...structural });
 
+        // ---- the footer select follows the prompt list
+        //
+        // Adding or deleting a prompt no longer rebuilds the panel, so the select
+        // is refreshed on its own. If that is wrong the panel looks fine and the
+        // "insert prompt" dropdown silently offers the old set — the exact failure
+        // a cheaper path invites, so it is asserted rather than assumed.
+        const selectSync = await evaluate(`
+            const seen = [];
+            for (let i = 0; i < 4; i += 1) {
+                await window.__harness.duplicateRow(15 + i);
+                await new Promise(r => requestAnimationFrame(() => r()));
+                seen.push({ step: 'duplicate', live: window.__harness.selectOptions(), expected: window.__harness.selectableOptions() });
+                await window.__harness.deleteRow(15 + i);
+                await new Promise(r => requestAnimationFrame(() => r()));
+                seen.push({ step: 'delete', live: window.__harness.selectOptions(), expected: window.__harness.selectableOptions() });
+            }
+            const drifted = seen.filter(entry => entry.live.join('|') !== entry.expected.join('|'));
+            return {
+                checks: seen.length,
+                drifted: drifted.length,
+                sample: drifted.length ? drifted[0] : null,
+            };
+        `);
+        console.log(`footer select after add/remove  checks ${selectSync.checks}  drifted ${selectSync.drifted}`);
+        if (selectSync.drifted > 0) {
+            const sample = selectSync.sample;
+            failures.push(`the footer select stopped following the prompt list after ${sample.step} (live ${sample.live.length} options, expected ${sample.expected.length})`);
+        }
+        results.push({ name: 'select-sync', ...selectSync });
+
         // ---- the pixel instrument must be able to see a blank panel
         //
         // Without this control a "0% blank" reading is meaningless: it could just be

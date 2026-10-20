@@ -331,6 +331,15 @@ window.__harness = {
         pending = Boolean(value);
     },
 
+    /** The footer select as it is on screen: whatever upstream last put in it. */
+    selectOptions: () => Array.from(document.querySelectorAll('#completion_prompt_manager_footer_append_prompt option'))
+        .map(option => `${option.value}\u0000${option.textContent}`),
+    /** What the prompt model says the footer select should contain. */
+    selectableOptions: () => [...instance.serviceSettings.prompts]
+        .filter(prompt => prompt && !prompt.system_prompt)
+        .sort((left, right) => left.name.localeCompare(right.name))
+        .map(prompt => `${prompt.identifier}\u0000${prompt.name}`),
+
     rowCount: () => document.querySelectorAll('#completion_prompt_manager_list li[data-pm-identifier]').length,
     setVariant,
     variant: () => variantName,

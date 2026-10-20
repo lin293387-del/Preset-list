@@ -46,6 +46,7 @@ export function createPanelState() {
         nodeByKey: new Map(),
         previousByKey: new Map(),
         structureSignature: null,
+        selectSignature: null,
         errorSignature: undefined,
         placeholderApplied: false,
         structureInvalid: false,
@@ -210,21 +211,39 @@ function getPrefix(instance) {
 }
 
 /**
- * Signature of everything the footer select and row set depend on. When it
- * changes the structure is rebuilt (add/delete/import/rename prompts), otherwise
- * the existing DOM is reused.
+ * Signature of the panel's identity: which character the container belongs to.
+ *
+ * It deliberately says nothing about the prompt list. Adding or removing a prompt
+ * is reconciled against the rows on screen (`planStructuralDelta`), and putting
+ * the prompt list in here made that reconciliation unreachable: every add or
+ * delete rebuilt the whole container — upstream render, 200 rows unparented and
+ * re-inserted, a fresh layout — to reach the same DOM the delta path builds by
+ * touching one row.
  *
  * @param {any} instance
  * @returns {string}
  */
-export function structureSignature(instance) {
+export function containerSignature(instance) {
+    return `${instance?.activeCharacter?.id ?? ''}\u0001${getPrefix(instance)}`;
+}
+
+/**
+ * Signature of the footer's "insert prompt" select: every selectable prompt's
+ * identifier and name, which is exactly what upstream puts in it.
+ *
+ * The select is the one part of the chrome that follows the prompt list, so it is
+ * tracked on its own and refreshed on its own.
+ *
+ * @param {any} instance
+ * @returns {string}
+ */
+export function selectSignature(instance) {
     const prompts = Array.isArray(instance?.serviceSettings?.prompts) ? instance.serviceSettings.prompts : [];
-    const selectable = prompts
+    return prompts
         .filter(prompt => prompt && !prompt.system_prompt)
         .map(prompt => `${prompt.identifier}\u0000${prompt.name}`)
-        .sort();
-    const characterId = instance?.activeCharacter?.id ?? '';
-    return `${characterId}\u0001${selectable.join('\u0002')}`;
+        .sort()
+        .join('\u0002');
 }
 
 /**
@@ -422,8 +441,44 @@ async function rebuildStructure(context) {
     installRowDelegation(instance, state);
     observeRowMetrics(state, state.listElement);
 
-    state.structureSignature = structureSignature(instance);
+    state.structureSignature = containerSignature(instance);
+    state.selectSignature = selectSignature(instance);
     state.errorSignature = instance.error;
+}
+
+/**
+ * Refreshes the footer's "insert prompt" select from upstream markup.
+ *
+ * Only the options are adopted: the live select keeps its own node (and whatever
+ * upstream bound to it), the buttons next to it keep their listeners, and the
+ * header and the rows are not touched at all. Upstream stays the author of the
+ * option markup, so a prompt that was added, renamed or deleted shows up there
+ * without this extension owning a copy of that template.
+ *
+ * @param {object} context
+ * @returns {Promise<void>}
+ */
+async function refreshSelectOptions(context) {
+    const { instance, originals, state } = context;
+    const live = state.select;
+    if (!(live instanceof HTMLElement)) {
+        return;
+    }
+
+    const scratch = document.createElement('div');
+    const restore = swapRenderTarget(instance, scratch);
+    try {
+        await originals.renderPromptManager.call(instance);
+    } finally {
+        restore();
+    }
+
+    const fresh = scratch.querySelector(`#${getPrefix(instance)}prompt_manager_footer_append_prompt`);
+    if (!(fresh instanceof HTMLElement)) {
+        return;
+    }
+    live.replaceChildren(...Array.from(fresh.childNodes));
+    state.selectSignature = selectSignature(instance);
 }
 
 /**
@@ -1217,7 +1272,7 @@ async function syncPanelNow(context) {
     const needsStructure = !state.listElement
         || !container.contains(state.listElement)
         || state.errorSignature !== instance.error
-        || state.structureSignature !== structureSignature(instance);
+        || state.structureSignature !== containerSignature(instance);
 
     const scroll = preserveScroll(container);
     // Whether the row set itself moves. Only then can the scroller clamp its
@@ -1276,6 +1331,11 @@ async function syncPanelNow(context) {
             state.placeholderApplied = false;
             applyStalePresentation(context);
             captureRowSignatures(context, renderedKeys);
+            // Only a sync that changed a row can have changed the select's
+            // contents, so the O(n log n) comparison stays off the fast paths.
+            if (state.selectSignature !== selectSignature(instance)) {
+                await refreshSelectOptions(context);
+            }
         }
         updateTotal(context);
         announcePath(context);
@@ -1335,6 +1395,7 @@ export async function fullRebuild(context) {
     state.nodeByKey = new Map();
     state.previousByKey = new Map();
     state.structureSignature = null;
+    state.selectSignature = null;
     state.errorSignature = undefined;
     state.placeholderApplied = false;
     try {
