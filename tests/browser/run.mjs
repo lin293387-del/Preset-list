@@ -473,6 +473,67 @@ async function run() {
         }
         results.push({ name: 'select-sync', ...selectSync });
 
+        // ---- a long list is built across several tasks, not one
+        //
+        // Building rows serialises and parses them one at a time. On a long list
+        // that is either one long task — during which nothing else on the page can
+        // run — or several short ones. This adds 400 prompts in one go (the shape
+        // of an import) and watches the tasks the browser reports while the rows
+        // are built.
+        const slicing = await evaluate(`
+            const longTasks = [];
+            const observer = new PerformanceObserver(list => {
+                for (const entry of list.getEntries()) longTasks.push(entry.duration);
+            });
+            try { observer.observe({ entryTypes: ['longtask'] }); } catch { /* not supported here */ }
+            const before = window.__harness.rowCount();
+            const started = performance.now();
+            await window.__harness.addBulk(400);
+            const elapsed = performance.now() - started;
+            await new Promise(r => setTimeout(r, 120));
+            observer.disconnect();
+
+            // Everything above describes the build itself; the cleanup below is a
+            // separate cost and must not be mistaken for it.
+            const added = window.__harness.rowCount() - before;
+            const slices = window.__harness.state.slices;
+            const measuredTasks = [...longTasks];
+
+            // Put the page back: the later scenarios measure a normal-sized panel.
+            await window.__harness.removeBulk();
+            await window.__harness.sync();
+
+            return {
+                added,
+                slices,
+                elapsed,
+                longest: measuredTasks.length ? Math.max(...measuredTasks) : 0,
+                longTasks: measuredTasks.length,
+                restored: window.__harness.rowCount() === before,
+            };
+        `);
+        console.log(`long-list build (400 added)  rows +${slicing.added}  elapsed ${slicing.elapsed.toFixed(1)} ms  slices ${slicing.slices}  longest task ${slicing.longest.toFixed(1)} ms`);
+        if (slicing.added < 400) {
+            failures.push(`adding 400 prompts produced ${slicing.added} rows`);
+        }
+        if (!slicing.restored) {
+            failures.push('the long-list measurement left its 400 prompts behind for the later scenarios');
+        }
+        if (slicing.slices < 1) {
+            failures.push('a 400-row build ran as a single task instead of yielding to the browser');
+        }
+        // What is left in one task after slicing is the upstream render call itself:
+        // one synchronous function this extension calls and cannot cut in half. The
+        // claims worth guarding are that the build is not one task and that no single
+        // task holds the thread for the whole build.
+        if (slicing.longTasks > 0 && slicing.longest >= slicing.elapsed) {
+            failures.push(`the long-list build ran as one ${slicing.longest.toFixed(0)} ms task (elapsed ${slicing.elapsed.toFixed(0)} ms)`);
+        }
+        if (slicing.longTasks > 0 && slicing.longest > 100) {
+            failures.push(`the long-list build held the main thread for ${slicing.longest.toFixed(0)} ms in one task`);
+        }
+        results.push({ name: 'slicing', ...slicing });
+
         // ---- the pixel instrument must be able to see a blank panel
         //
         // Without this control a "0% blank" reading is meaningless: it could just be

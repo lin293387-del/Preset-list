@@ -267,7 +267,12 @@ window.__harness = {
         return window.__mutationLog ?? { total: 0, duringGesture: 0 };
     },
     get state() {
-        return { lastPath: context.state.lastPath, lastStats: context.state.lastStats, structureInvalid: context.state.structureInvalid };
+        return {
+            lastPath: context.state.lastPath,
+            lastStats: context.state.lastStats,
+            structureInvalid: context.state.structureInvalid,
+            slices: context.state.lastSlices,
+        };
     },
     diagnostics: () => diagnostics.snapshot(),
 
@@ -312,6 +317,42 @@ window.__harness = {
             identifier: copy.identifier,
             enabled: instance.serviceSettings.prompt_order[0].order[index]?.enabled ?? true,
         });
+        return requestSync();
+    },
+
+    /**
+     * Adds many prompts in one go (an import, or a character with a long list).
+     *
+     * The rows for them have to be built at once, which is the case the slicer
+     * exists for: the work grows with the list and none of it is urgent.
+     */
+    async addBulk(count = 100) {
+        const order = instance.serviceSettings.prompt_order[0].order;
+        const template = prompts.find(prompt => prompt && !prompt.system_prompt) ?? prompts[0];
+        for (let i = 0; i < count; i += 1) {
+            const copy = { ...template, identifier: `bulk-${Date.now()}-${i}`, name: `Bulk ${i}` };
+            prompts.push(copy);
+            order.push({ identifier: copy.identifier, enabled: true });
+            counts[copy.identifier] = 10 + i;
+        }
+        return requestSync();
+    },
+
+    /** Removes everything `addBulk` added, so a measurement does not change the page for later ones. */
+    async removeBulk() {
+        const order = instance.serviceSettings.prompt_order[0].order;
+        for (let index = prompts.length - 1; index >= 0; index -= 1) {
+            const prompt = prompts[index];
+            if (!prompt || !String(prompt.identifier).startsWith('bulk-')) {
+                continue;
+            }
+            prompts.splice(index, 1);
+            delete counts[prompt.identifier];
+            const at = order.findIndex(entry => entry.identifier === prompt.identifier);
+            if (at >= 0) {
+                order.splice(at, 1);
+            }
+        }
         return requestSync();
     },
 

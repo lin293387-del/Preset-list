@@ -25,6 +25,7 @@
  * silent no-op.
  */
 
+import { runSliced } from '../perf/slicer.js';
 import { RowParseError, extractRowMeta, planRowOps } from './plan.js';
 import { applyLocalRows, applyRowPlan, createNodeFromHtml, syncHeadNodes, updateTokenNumbers } from './apply.js';
 
@@ -64,6 +65,8 @@ export function createPanelState() {
         rowGlobals: '',
         /** Model key order the list was last left in. */
         appliedModelKeys: null,
+        /** How many times the last row build yielded to the browser. */
+        lastSlices: 0,
         /** Watches the first row so the CSS placeholder height matches reality. */
         rowObserver: null,
         rowObserverTarget: null,
@@ -688,16 +691,18 @@ function promptShape(prompt) {
  * @param {object} context
  * @param {string[] | null} [onlyKeys]
  */
-function captureRowSignatures(context, onlyKeys = null) {
+async function captureRowSignatures(context, onlyKeys = null) {
     const { instance, state } = context;
     const globals = rowGlobals(instance);
     if (Array.isArray(onlyKeys)) {
         const targeted = createLookups(instance);
-        for (const key of onlyKeys) {
+        // A long import arrives with hundreds of new keys at once; the fingerprints
+        // are bookkeeping, so they are spread over several tasks like the build.
+        await runSliced(onlyKeys, key => {
             const prompt = targeted.prompts.get(key) ?? null;
             const signature = rowSignature(prompt, globals, targeted.order.get(key) ?? null);
             state.rowSignatures.set(key, signature === null ? null : `${signature}\u0003${promptShape(prompt)}`);
-        }
+        });
         return;
     }
     const lookups = createLookups(instance);
@@ -712,14 +717,14 @@ function captureRowSignatures(context, onlyKeys = null) {
     if (!Array.isArray(prompts)) {
         return;
     }
-    for (const prompt of prompts) {
+    await runSliced(prompts, prompt => {
         if (!prompt) {
-            continue;
+            return;
         }
         const key = String(prompt.identifier);
         const signature = rowSignature(prompt, globals, lookups.order.get(key) ?? null);
         state.rowSignatures.set(key, signature === null ? null : `${signature}\u0003${promptShape(prompt)}`);
-    }
+    });
 }
 
 /**
@@ -812,18 +817,24 @@ async function buildRows(context, onlyKeys = null) {
         }
     }
 
+    /** @type {Element[]} */
     const headNodes = [];
+    /** @type {Array<object>} */
     const nextRows = [];
-    for (const node of Array.from(scratchList.children)) {
+    // Serialising and parsing a row is the part of a build that grows with the
+    // list, and the nodes here belong to a detached list, so nothing observes a
+    // pause. A long panel therefore pays for its rows across several tasks
+    // instead of holding the main thread for the whole build.
+    const slices = await runSliced(Array.from(scratchList.children), node => {
         const key = node.getAttribute('data-pm-identifier');
         if (!key) {
             headNodes.push(node);
-            continue;
+            return;
         }
         const html = node.outerHTML;
-        const meta = extractRowMeta(html);
-        nextRows.push({ ...meta, html });
-    }
+        nextRows.push({ ...extractRowMeta(html), html });
+    });
+    state.lastSlices = slices;
 
     return { headNodes, nextRows };
 }
@@ -1237,7 +1248,10 @@ async function syncStructuralDelta(context, delta, modelKeys) {
         }
         syncHeadNodes(list, headNodes);
 
-        for (const row of nextRows) {
+        // One node at a time, and a slice boundary every few milliseconds: an
+        // import that adds hundreds of prompts fills in over a couple of frames
+        // instead of freezing the panel until the last one is in place.
+        await runSliced(nextRows, row => {
             const node = createNodeFromHtml(row.html);
             const following = nextKnownRowNode(state, modelKeys, row.key);
             if (following) {
@@ -1247,7 +1261,7 @@ async function syncStructuralDelta(context, delta, modelKeys) {
             }
             state.nodeByKey.set(row.key, node);
             state.previousByKey.set(row.key, row);
-        }
+        });
     }
 
     const moved = delta.reorder ? reorderRows(state, modelKeys) : 0;
@@ -1383,7 +1397,7 @@ async function syncPanelNow(context) {
             // let the presentation decide whether they have to be hidden.
             state.placeholderApplied = false;
             applyStalePresentation(context);
-            captureRowSignatures(context, renderedKeys);
+            await captureRowSignatures(context, renderedKeys);
         }
 
         // The select is checked on every sync, not only on the ones that rebuilt a
