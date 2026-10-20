@@ -223,6 +223,28 @@ window.__harness = {
     rows: ROW_COUNT,
     sync: () => syncPanel(context),
     requestSync,
+    /**
+     * A fixed, DOM-heavy workload measured on the page's own clock.
+     *
+     * The panel scenarios time single one-shot operations, so their absolute
+     * values follow the device — thermal state, background load — and move by 60%
+     * between sessions on identical code. This number moves with them and not
+     * with the extension, which makes `panel / calibration` comparable across
+     * sessions. The sink keeps the work observable so a JIT cannot elide it.
+     */
+    calibrate(rounds = 1200) {
+        const started = performance.now();
+        let sink = 0;
+        for (let index = 0; index < rounds; index += 1) {
+            const holder = document.createElement('div');
+            holder.innerHTML = `<li class="completion_prompt_manager_prompt" data-pm-identifier="c-${index}">`
+                + '<span class="completion_prompt_manager_prompt_name">Calibration row</span>'
+                + '<span class="completion_prompt_manager_prompt_tokens" data-pm-tokens="12"><span>12</span></span></li>';
+            sink += holder.querySelectorAll('li').length;
+            sink += holder.textContent.length & 1;
+        }
+        return performance.now() - started + sink * 0;
+    },
     gateState: () => ({ held: gestureHeld, deferred: gate.isDeferred(), reason: gate.deferredReason() }),
     /** Count DOM mutations the panel makes, so "no writes during a fling" is provable. */
     watchMutations() {

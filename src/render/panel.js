@@ -561,11 +561,26 @@ function promptShape(prompt) {
  * against. Runs after every sync that rendered rows, so the next sync compares
  * against what is really on screen.
  *
+ * A sync that rebuilt only some rows (`onlyKeys`) only has to refresh those:
+ * every other row on screen still shows what its stored fingerprint describes,
+ * and a sync that got this far already proved the instance-wide fingerprint did
+ * not move. Recomputing all of them would be work whose result is thrown away.
+ *
  * @param {object} context
+ * @param {string[] | null} [onlyKeys]
  */
-function captureRowSignatures(context) {
+function captureRowSignatures(context, onlyKeys = null) {
     const { instance, state } = context;
     const globals = rowGlobals(instance);
+    if (Array.isArray(onlyKeys)) {
+        const targeted = createLookups(instance);
+        for (const key of onlyKeys) {
+            const prompt = targeted.prompts.get(key) ?? null;
+            const signature = rowSignature(prompt, globals, targeted.order.get(key) ?? null);
+            state.rowSignatures.set(key, signature === null ? null : `${signature}\u0003${promptShape(prompt)}`);
+        }
+        return;
+    }
     const lookups = createLookups(instance);
     state.rowGlobals = globals;
     state.rowSignatures = new Map();
@@ -1201,6 +1216,8 @@ async function syncPanelNow(context) {
         const rowsIntact = live.length === state.nodeByKey.size
             && live.every(node => state.nodeByKey.get(node.getAttribute('data-pm-identifier')) === node);
 
+        /** @type {string[] | null} */
+        let renderedKeys = null;
         const delta = rowsIntact ? planStructuralDelta(context, modelKeys) : null;
 
         const decision = delta
@@ -1211,6 +1228,9 @@ async function syncPanelNow(context) {
 
         if (delta) {
             await syncStructuralDelta(context, delta, modelKeys);
+            // Only the inserted rows are new; the survivors kept their
+            // fingerprints and the departed ones were dropped with their nodes.
+            renderedKeys = delta.added;
         } else if (decision.path === 'chrome') {
             // No row can look different, so only the numbers have to be written.
             syncTokensOnly(context);
@@ -1218,6 +1238,7 @@ async function syncPanelNow(context) {
             const keys = decision.path === 'local' ? locallyRenderableKeys(state, decision.keys) : [];
             const narrowed = keys.length > 0 && keys.length < modelKeys.length ? keys : null;
             await syncRows(context, narrowed);
+            renderedKeys = narrowed;
         }
 
         if (state.lastPath !== 'tokens') {
@@ -1225,7 +1246,7 @@ async function syncPanelNow(context) {
             // let the presentation decide whether they have to be hidden.
             state.placeholderApplied = false;
             applyStalePresentation(context);
-            captureRowSignatures(context);
+            captureRowSignatures(context, renderedKeys);
         }
         updateTotal(context);
         announcePath(context);

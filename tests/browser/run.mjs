@@ -81,6 +81,8 @@ async function run() {
     /** @type {string[]} */
     const pageErrors = [];
     const results = [];
+    /** Medians of the interaction scenarios only — the number a sync costs. */
+    const panelMedians = [];
     /** @type {string[]} */
     const failures = [];
 
@@ -169,12 +171,25 @@ async function run() {
                 };
             `);
             results.push({ name, ...outcome });
+            panelMedians.push(outcome.median);
             const line = `${name.padEnd(46)} median ${outcome.median.toFixed(1).padStart(7)} ms  p95 ${outcome.p95.toFixed(1).padStart(7)} ms  frames ${String(outcome.frames).padStart(4)}  >50ms ${String(outcome.longFrames).padStart(3)}  path=${outcome.path}`;
             console.log(line);
             return outcome;
         };
 
         console.log(`\nrows=${ROWS} repeats=${REPEATS} chromium=${chrome}\n`);
+
+        // Calibration first, while the page is idle: the panel scenarios below are
+        // one-shot operations whose absolute cost follows the device, this fixed
+        // workload follows it too, and the ratio does not.
+        const calibration = await evaluate(`
+            let best = Infinity;
+            for (let round = 0; round < 3; round += 1) {
+                best = Math.min(best, window.__harness.calibrate());
+            }
+            return best;
+        `);
+        console.log(`calibration (fixed workload, min of 3) ${calibration.toFixed(1)} ms`);
 
         // The steady state has to be free: a no-op sync must not touch upstream.
         await scenario('idle sync (no change)', 'await window.__harness.sync();');
@@ -586,6 +601,12 @@ async function run() {
         if (hammer.paced.longFrames > 5) {
             failures.push(`hammer dropped ${hammer.paced.longFrames} frames over 50 ms while paced`);
         }
+
+        // One machine-readable line so a measurement can be compared across
+        // sessions: the panel sum is a one-shot-operation cost that follows the
+        // device, the calibration is a fixed workload that follows it too.
+        const panelSum = panelMedians.reduce((total, median) => total + median, 0);
+        console.log(`summary panel-sum ${panelSum.toFixed(2)} calibration ${calibration.toFixed(2)}`);
 
         await client.close();
 
