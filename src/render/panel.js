@@ -62,6 +62,8 @@ export function createPanelState() {
         rowSignatures: new Map(),
         /** Instance-wide inputs of the row template (token usage, budgets, overrides). */
         rowGlobals: '',
+        /** Model key order the list was last left in. */
+        appliedModelKeys: null,
         /** Watches the first row so the CSS placeholder height matches reality. */
         rowObserver: null,
         rowObserverTarget: null,
@@ -196,6 +198,23 @@ function stopRowMetrics(state) {
     state.rowObserver = null;
     state.rowObserverTarget = null;
     state.rowObserverList = null;
+}
+
+/**
+ * @param {string[] | null | undefined} first
+ * @param {string[]} second
+ * @returns {boolean} True when both arrays hold the same keys in the same order.
+ */
+function sameKeys(first, second) {
+    if (!Array.isArray(first) || first.length !== second.length) {
+        return false;
+    }
+    for (let index = 0; index < second.length; index += 1) {
+        if (first[index] !== second[index]) {
+            return false;
+        }
+    }
+    return true;
 }
 
 /**
@@ -463,6 +482,9 @@ async function rebuildStructure(context) {
     state.structureSignature = containerSignature(instance);
     state.selectSignature = selectSignature(instance);
     state.errorSignature = instance.error;
+    // The rows came back in whatever order they were before: the next sync has to
+    // look at the list to know whether that is still model order.
+    state.appliedModelKeys = null;
 }
 
 /**
@@ -816,7 +838,7 @@ async function buildRows(context, onlyKeys = null) {
  * @param {object} context
  * @returns {object} Plan statistics.
  */
-function syncTokensOnly(context) {
+function syncTokensOnly(context, liveRows) {
     const { instance, state } = context;
     if (state.placeholderApplied) {
         // The placeholder owns the cells right now; writing numbers here would
@@ -831,7 +853,7 @@ function syncTokensOnly(context) {
     const counts = instance?.tokenHandler?.getCounts?.() ?? {};
     const values = new Map();
 
-    for (const node of rowNodes(liveList)) {
+    for (const node of liveRows ?? rowNodes(liveList)) {
         const key = node.getAttribute('data-pm-identifier');
         if (!key) {
             continue;
@@ -848,7 +870,12 @@ function syncTokensOnly(context) {
         }
     }
 
-    const applied = updateTokenNumbers(liveList, values);
+    // Nothing to write is the common case for a recount that only moved numbers
+    // nothing displays: taking the walk anyway would read every row again to
+    // discover that the map it was given is empty.
+    const applied = values.size > 0
+        ? updateTokenNumbers(liveList, values)
+        : { tokens: 0, rebuilt: 0 };
     const stats = { created: 0, updated: 0, tokens: applied.tokens, removed: 0, moved: 0, rebuilt: applied.rebuilt, replaced: 0 };
 
     // A row whose cell could not be patched in place has to be rendered again on
@@ -1111,7 +1138,7 @@ function announcePath(context) {
  * @param {string[]} modelKeys
  * @returns {{ added: string[], removed: string[], reorder: boolean } | null}
  */
-function planStructuralDelta(context, modelKeys) {
+function planStructuralDelta(context, modelKeys, liveRows) {
     const { instance, state } = context;
     const known = state.nodeByKey;
     if (known.size === 0) {
@@ -1127,19 +1154,26 @@ function planStructuralDelta(context, modelKeys) {
             removed.push(key);
         }
     }
-    // A pure reorder is structural too, and it needs no markup at all: the nodes
-    // are already on screen, they are just in the old order.
-    const survivingModelOrder = modelKeys.filter(key => known.has(key));
-    /** @type {string[]} */
-    const domOrder = [];
-    for (const node of rowNodes(state.listElement)) {
-        const key = node.getAttribute('data-pm-identifier');
-        if (key !== null && known.has(key) && modelSet.has(key)) {
-            domOrder.push(key);
+    // The rows can only be in the wrong order when the model order itself moved,
+    // and comparing two key arrays answers that without touching the list. Only
+    // when it did move does the DOM get read.
+    const sameOrder = sameKeys(state.appliedModelKeys, modelKeys);
+    let reorder = false;
+    if (!sameOrder) {
+        // A pure reorder is structural too, and it needs no markup at all: the
+        // nodes are already on screen, they are just in the old order.
+        const survivingModelOrder = modelKeys.filter(key => known.has(key));
+        /** @type {string[]} */
+        const domOrder = [];
+        for (const node of liveRows ?? rowNodes(state.listElement)) {
+            const key = node.getAttribute('data-pm-identifier');
+            if (key !== null && known.has(key) && modelSet.has(key)) {
+                domOrder.push(key);
+            }
         }
+        reorder = survivingModelOrder.length === domOrder.length
+            && survivingModelOrder.some((key, index) => key !== domOrder[index]);
     }
-    const reorder = survivingModelOrder.length === domOrder.length
-        && survivingModelOrder.some((key, index) => key !== domOrder[index]);
 
     if (added.length === 0 && removed.length === 0 && !reorder) {
         return null;
@@ -1318,7 +1352,7 @@ async function syncPanelNow(context) {
 
         /** @type {string[] | null} */
         let renderedKeys = null;
-        const delta = rowsIntact ? planStructuralDelta(context, modelKeys) : null;
+        const delta = rowsIntact ? planStructuralDelta(context, modelKeys, live) : null;
 
         const decision = delta
             ? { path: /** @type {'local'} */ ('local'), keys: delta.added }
@@ -1334,7 +1368,7 @@ async function syncPanelNow(context) {
             renderedKeys = delta.added;
         } else if (decision.path === 'chrome') {
             // No row can look different, so only the numbers have to be written.
-            syncTokensOnly(context);
+            syncTokensOnly(context, live);
         } else {
             const keys = decision.path === 'local' ? locallyRenderableKeys(state, decision.keys) : [];
             const narrowed = keys.length > 0 && keys.length < modelKeys.length ? keys : null;
@@ -1361,6 +1395,9 @@ async function syncPanelNow(context) {
         }
         updateTotal(context);
         announcePath(context);
+        // Every path above leaves the list in model order, so the next sync can
+        // answer "did the order move" without reading the list at all.
+        state.appliedModelKeys = modelKeys;
     } finally {
         // The sync may have emptied the list while it built the new markup, which
         // makes the browser clamp the offset to the top. Restore it here instead of
@@ -1418,6 +1455,7 @@ export async function fullRebuild(context) {
     state.previousByKey = new Map();
     state.structureSignature = null;
     state.selectSignature = null;
+    state.appliedModelKeys = null;
     state.errorSignature = undefined;
     state.placeholderApplied = false;
     try {
