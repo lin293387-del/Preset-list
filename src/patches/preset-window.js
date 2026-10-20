@@ -296,7 +296,7 @@ export function createPresetWindowCoalescer({ settings, diagnostics, onWindowEnd
             return;
         }
         if (!jQuery?.fn?.trigger) {
-            throw new Error('[Preset Lite] jQuery trigger is unavailable');
+            throw new Error('[Tavern Optimize] jQuery trigger is unavailable');
         }
 
         jQueryRef = jQuery;

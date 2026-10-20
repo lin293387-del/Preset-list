@@ -4,10 +4,17 @@
  * regular SillyTavern settings file (`extension_settings`).
  */
 
-export const SETTINGS_NAMESPACE = 'preset-lite';
+export const SETTINGS_NAMESPACE = 'tavern-optimize';
 
 /**
- * @typedef {object} PresetLiteSettings
+ * Namespace this extension stored its settings under before it was renamed from
+ * Preset Lite. Only read, never written: a user who already configured the
+ * panel keeps their toggles instead of silently getting the defaults back.
+ */
+const LEGACY_SETTINGS_NAMESPACE = 'preset-lite';
+
+/**
+ * @typedef {object} TavernOptimizeSettings
  * @property {boolean} enabled Master switch; off means every patched path delegates to upstream.
  * @property {boolean} keepStaleNumbers Keep the last known token numbers (dimmed) while a recount is pending.
  * @property {number} idleDelayMs Minimum quiet time after the last interaction before a recount may start.
@@ -19,7 +26,7 @@ export const SETTINGS_NAMESPACE = 'preset-lite';
  * @property {number} tokenCacheLimit LRU bound for the persistent token cache.
  */
 
-/** @type {PresetLiteSettings} */
+/** @type {TavernOptimizeSettings} */
 export const DEFAULT_SETTINGS = Object.freeze({
     /** Master switch. When off, every patched path delegates to upstream. */
     enabled: true,
@@ -80,16 +87,16 @@ function coerce(key, value) {
 
 /**
  * @param {Record<string, any>} context Page context.
- * @returns {{ get: () => PresetLiteSettings, update: (patch: Record<string, any>) => void, subscribe: (listener: () => void) => () => void }}
+ * @returns {{ get: () => TavernOptimizeSettings, update: (patch: Record<string, any>) => void, subscribe: (listener: () => void) => () => void }}
  */
 export function createSettings(context) {
     const container = context.extensionSettings;
     if (!container || typeof container !== 'object') {
-        throw new Error('[Preset Lite] extensionSettings is unavailable');
+        throw new Error('[Tavern Optimize] extensionSettings is unavailable');
     }
 
-    const existing = container[SETTINGS_NAMESPACE];
-    /** @type {PresetLiteSettings} */
+    const existing = container[SETTINGS_NAMESPACE] ?? container[LEGACY_SETTINGS_NAMESPACE];
+    /** @type {TavernOptimizeSettings} */
     const state = { ...DEFAULT_SETTINGS };
 
     if (existing && typeof existing === 'object') {
@@ -134,7 +141,7 @@ export function createSettings(context) {
                 try {
                     listener();
                 } catch (error) {
-                    console.error('[Preset Lite] Settings listener failed:', error);
+                    console.error('[Tavern Optimize] Settings listener failed:', error);
                 }
             }
         },

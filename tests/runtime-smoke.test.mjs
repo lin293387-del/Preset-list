@@ -87,7 +87,7 @@ describe('runtime smoke test', { skip: Window ? false : 'happy-dom is not instal
 
         /**
          * jQuery event types may be namespaced and space separated
-         * (`'sortstart.ttPresetLite sortbegin.ttPresetLite'`); DOM listeners only
+         * (`'sortstart.ttTavernOptimize sortbegin.ttTavernOptimize'`); DOM listeners only
          * understand the bare names.
          *
          * @param {any} type
@@ -181,7 +181,7 @@ describe('runtime smoke test', { skip: Window ? false : 'happy-dom is not instal
             eventSource,
             eventTypes,
             saveSettingsDebounced() {},
-            renderExtensionTemplateAsync: async () => '<div id="preset-lite-settings"></div>',
+            renderExtensionTemplateAsync: async () => '<div id="tavern-optimize-settings"></div>',
         };
         /** @type {any} */ (globalThis).__TEST_CONTEXT__ = context;
 
@@ -207,7 +207,7 @@ describe('runtime smoke test', { skip: Window ? false : 'happy-dom is not instal
             context: app.context,
             settings,
             diagnostics,
-            identity: { name: 'third-party/Preset-list', folder: 'Preset-list' },
+            identity: { name: 'third-party/Tavern-Optimize', folder: 'Tavern-Optimize' },
         });
         runtime.start();
 
@@ -439,7 +439,7 @@ describe('runtime smoke test', { skip: Window ? false : 'happy-dom is not instal
             runtime.stop();
         } finally {
             assert.notEqual(PromptManager.prototype.render, prototypeRender, 'prototype is restored');
-            assert.equal(document.body.classList.contains('tt-pl-on'), false);
+            assert.equal(document.body.classList.contains('tt-to-on'), false);
             assert.equal(app.eventSource.count(app.eventTypes.OAI_PRESET_CHANGED_BEFORE), 0, 'listeners are removed');
             openai.__setPromptManager(null);
         }

@@ -1,19 +1,19 @@
 /**
- * Preset Lite styles.
+ * Tavern Optimize styles.
  *
- * Everything is scoped to `body.tt-pl-on`, which the runtime toggles together
+ * Everything is scoped to `body.tt-to-on`, which the runtime toggles together
  * with the master switch, so disabling the extension removes every visual change
  * without a reload.
  */
 
 /* Keep this settings block inside the viewport on narrow screens. */
-body.tt-pl-on .preset-lite-settings,
-body.tt-pl-on .preset-lite-settings .inline-drawer-content {
+body.tt-to-on .tavern-optimize-settings,
+body.tt-to-on .tavern-optimize-settings .inline-drawer-content {
     max-width: 100%;
     min-width: 0;
 }
 
-body.tt-pl-on .preset-lite-settings .preset-lite-grid {
+body.tt-to-on .tavern-optimize-settings .tavern-optimize-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 0.5em;
@@ -21,18 +21,18 @@ body.tt-pl-on .preset-lite-settings .preset-lite-grid {
 }
 
 @media (max-width: 480px) {
-    body.tt-pl-on .preset-lite-settings .preset-lite-grid {
+    body.tt-to-on .tavern-optimize-settings .tavern-optimize-grid {
         grid-template-columns: 1fr;
     }
 }
 
-body.tt-pl-on .preset-lite-settings .preset-lite-grid label {
+body.tt-to-on .tavern-optimize-settings .tavern-optimize-grid label {
     display: flex;
     flex-direction: column;
     gap: 0.25em;
 }
 
-body.tt-pl-on .preset-lite-settings .preset-lite-buttons {
+body.tt-to-on .tavern-optimize-settings .tavern-optimize-buttons {
     flex-wrap: wrap;
     gap: 0.25em;
     margin-top: 0.5em;
@@ -43,7 +43,7 @@ body.tt-pl-on .preset-lite-settings .preset-lite-buttons {
  * box to its longest line and pushes long helper texts off narrow screens. Inside
  * this block the text wraps instead.
  */
-body.tt-pl-on .preset-lite-settings .toggle-description {
+body.tt-to-on .tavern-optimize-settings .toggle-description {
     width: auto;
     max-width: 100%;
     margin-right: 0;
@@ -52,18 +52,18 @@ body.tt-pl-on .preset-lite-settings .toggle-description {
     overflow-wrap: anywhere;
 }
 
-body.tt-pl-on .preset-lite-settings .checkbox_label {
+body.tt-to-on .tavern-optimize-settings .checkbox_label {
     flex-wrap: wrap;
     min-width: 0;
     align-items: center;
 }
 
-body.tt-pl-on .preset-lite-settings .checkbox_label > span {
+body.tt-to-on .tavern-optimize-settings .checkbox_label > span {
     min-width: 0;
     overflow-wrap: anywhere;
 }
 
-body.tt-pl-on .preset-lite-settings .preset-lite-status {
+body.tt-to-on .tavern-optimize-settings .tavern-optimize-status {
     white-space: pre-wrap;
     font-family: var(--monoFontFamily, monospace);
     font-size: calc(var(--mainFontSize) * 0.85);
@@ -76,7 +76,7 @@ body.tt-pl-on .preset-lite-settings .preset-lite-status {
     overflow: auto;
 }
 
-body.tt-pl-on .preset-lite-settings .preset-lite-status:empty {
+body.tt-to-on .tavern-optimize-settings .tavern-optimize-status:empty {
     display: none;
 }
 
@@ -84,12 +84,12 @@ body.tt-pl-on .preset-lite-settings .preset-lite-status:empty {
  * Dim - instead of blank - the numbers that are still being recalculated, so the
  * panel never flashes a table full of placeholders after a toggle.
  */
-body.tt-pl-on .completion_prompt_manager_header.tt-pl-stale {
+body.tt-to-on .completion_prompt_manager_header.tt-to-stale {
     opacity: 0.45;
     transition: opacity 0.15s ease-in-out;
 }
 
-body.tt-pl-on .tt-pl-stale .prompt_manager_prompt_tokens {
+body.tt-to-on .tt-to-stale .prompt_manager_prompt_tokens {
     opacity: 0.45;
     transition: opacity 0.15s ease-in-out;
 }
@@ -103,17 +103,17 @@ body.tt-pl-on .tt-pl-stale .prompt_manager_prompt_tokens {
  * takes that space from `contain-intrinsic-block-size`. A fixed value there is
  * the classic source of "fast fling looks broken": the placeholder is shorter or
  * taller than the real row, so the scrollbar, the scroll range and every row
- * flung into view are all measured against a guess. `--tt-pl-row-height` is
+ * flung into view are all measured against a guess. `--tt-to-row-height` is
  * published from the real row by the renderer, so the reserved space is exact.
  */
 @supports (content-visibility: auto) {
-    body.tt-pl-on #completion_prompt_manager_list > li.completion_prompt_manager_prompt {
+    body.tt-to-on #completion_prompt_manager_list > li.completion_prompt_manager_prompt {
         content-visibility: auto;
-        contain-intrinsic-block-size: auto var(--tt-pl-row-height, 2.25rem);
+        contain-intrinsic-block-size: auto var(--tt-to-row-height, 2.25rem);
     }
 
     /* Row measurements must be exact while jQuery UI computes drop positions. */
-    body.tt-pl-dragging #completion_prompt_manager_list > li.completion_prompt_manager_prompt {
+    body.tt-to-dragging #completion_prompt_manager_list > li.completion_prompt_manager_prompt {
         content-visibility: visible;
         contain-intrinsic-block-size: none;
     }

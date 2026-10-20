@@ -1,8 +1,11 @@
-# Preset Lite
+# Tavern Optimize
 
-A third-party extension for **TauriTavern** that keeps the chat-completion **preset / prompt panel**
-light and smooth: prompt rows are reconciled instead of rebuilt, token recounts move out of the
-interaction path, and the preset-apply event storm is coalesced.
+A third-party extension for **TauriTavern** that makes the frontend lighter and smoother.
+
+Today it covers the chat-completion **preset / prompt panel**: prompt rows are reconciled instead of
+rebuilt, token recounts move out of the interaction path, and the preset-apply event storm is
+coalesced. The same approach is being extended to the rest of the app — a mobile-only paint-cost
+layer, a sliced long-task scheduler and input-path isolation.
 
 Nothing inside the application source is modified. Every patched path delegates back to upstream the
 moment the extension is switched off, so the panel can always be returned to stock behaviour without
@@ -14,7 +17,7 @@ a reload.
 
 ## What it changes
 
-| Panel interaction | Upstream | With Preset Lite |
+| Panel interaction | Upstream | With Tavern Optimize |
 | --- | --- | --- |
 | Toggle / edit / delete / add a prompt | `#completion_prompt_manager` is cleared and fully rebuilt, ~4 listeners re-attached per row | only the affected row is re-rendered (upstream still builds its markup, pointed at that one prompt) |
 | Token numbers | rebuilt list waits for a full dry run of the whole generation pipeline | interaction paints immediately, the dry run is coalesced and runs once while the browser is idle, then the numbers are written **into the existing cells** — no markup is built at all |
@@ -55,7 +58,7 @@ renderer is not called at all: the request is remembered and applied once when t
   gesture ends, so the list never empties under the finger and the scroll offset never jumps.
 
 The scroll range is also kept honest: the height reserved for a not-yet-painted row is published from
-a real row (`--tt-pl-row-height`, kept up to date by a `ResizeObserver`), so flinging cannot make the
+a real row (`--tt-to-row-height`, kept up to date by a `ResizeObserver`), so flinging cannot make the
 scrollbar or the range drift. The browser test measures that drift at 0 px; with a fixed placeholder
 it was 1552 px at 200 rows, which is exactly the "blank flash then jump" users report.
 
@@ -73,8 +76,8 @@ Through the extension installer (recommended, updatable):
 https://github.com/lin293387-del/Preset-list
 ```
 
-Or manually: copy this folder to `<data_root>/default-user/extensions/Preset-list/` (local) or
-`<data_root>/extensions/third-party/Preset-list/` (global), then enable **Preset Lite** in the
+Or manually: copy this folder to `<data_root>/default-user/extensions/Tavern-Optimize/` (local) or
+`<data_root>/extensions/third-party/Tavern-Optimize/` (global), then enable **Tavern Optimize** in the
 extension list. `manifest.json` must stay at the root of the folder.
 
 Uninstall = disable or delete the extension; no data outside the extension store is written.
@@ -83,11 +86,11 @@ Uninstall = disable or delete the extension; no data outside the extension store
 
 ## Settings
 
-`Extensions → Preset Lite`
+`Extensions → Tavern Optimize`
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| Enable Preset Lite | on | Master switch. Off restores stock rendering instantly. |
+| Enable Tavern Optimize | on | Master switch. Off restores stock rendering instantly. |
 | Keep last known token numbers | on | While a recount is pending the numbers stay visible (dimmed). Off shows `-` like upstream. |
 | Coalesce preset apply events | on | Merges the preset-apply `input` storm and replays it once at the end of the window. Fields the preset did not move are skipped, and a `change` event re-fired for an unmoved select is dropped. Everything else keeps its original timing. |
 | Report preset field conflicts | on | If a replayed handler rewrites a field the preset just wrote, that field is listed in the status area instead of being silently swallowed. |
@@ -113,10 +116,10 @@ leaves the frontend; everything else is local work.
 Runtime API for the console:
 
 ```js
-__PRESET_LITE__.snapshot()      // scheduler, cache, panel sync stats, diagnostics
-__PRESET_LITE__.enable(false)   // compare against stock behaviour without touching settings
-__PRESET_LITE__.recountNow()    // force an exact recount
-__PRESET_LITE__.clearCache()    // drop every cached token count
+__TAVERN_OPTIMIZE__.snapshot()      // scheduler, cache, panel sync stats, diagnostics
+__TAVERN_OPTIMIZE__.enable(false)   // compare against stock behaviour without touching settings
+__TAVERN_OPTIMIZE__.recountNow()    // force an exact recount
+__TAVERN_OPTIMIZE__.clearCache()    // drop every cached token count
 ```
 
 ---
@@ -242,7 +245,7 @@ MIT — see [LICENSE](LICENSE).
 `input` 事件。**不改任何应用源码**，关掉开关就立刻回到原生行为。
 
 **装**：在扩展安装器里填 `https://github.com/lin293387-del/Preset-list`，或把整个文件夹放进
-`<数据目录>/default-user/extensions/Preset-list/`，然后在扩展列表里启用。
+`<数据目录>/default-user/extensions/Tavern-Optimize/`，然后在扩展列表里启用。
 
 **验证**：打开左栏「AI 响应配置」面板，交互结束后 token 数字应在一个空闲窗口内刷新成真实值；
 只有真正没有 token（被禁用/内容为空）的提示词才显示 `-`。

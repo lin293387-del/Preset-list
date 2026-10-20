@@ -141,7 +141,7 @@ function observeRowMetrics(state, listElement) {
     const publish = () => {
         const height = first.getBoundingClientRect().height;
         if (height > 0) {
-            listElement.style.setProperty('--tt-pl-row-height', `${height.toFixed(2)}px`);
+            listElement.style.setProperty('--tt-to-row-height', `${height.toFixed(2)}px`);
         }
     };
 
@@ -838,7 +838,7 @@ function applyStalePresentation(context) {
     };
 
     if (placeholder) {
-        list.classList.remove('tt-pl-stale');
+        list.classList.remove('tt-to-stale');
         if (!state.placeholderApplied) {
             for (const cell of list.querySelectorAll('.prompt_manager_prompt_tokens')) {
                 cell.setAttribute('data-pm-tokens', '-');
@@ -856,8 +856,8 @@ function applyStalePresentation(context) {
     }
 
     const stale = pending && settings.get().keepStaleNumbers;
-    list.classList.toggle('tt-pl-stale', stale);
-    state.headerDiv?.classList.toggle('tt-pl-stale', stale);
+    list.classList.toggle('tt-to-stale', stale);
+    state.headerDiv?.classList.toggle('tt-to-stale', stale);
     const hint = stale ? 'Recalculating token counts…' : '';
     if (state.totalDiv && state.totalDiv.getAttribute('title') !== hint) {
         state.totalDiv.setAttribute('title', hint);

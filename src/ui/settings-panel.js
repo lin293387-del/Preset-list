@@ -7,21 +7,21 @@
  * second copy of the user's configuration.
  */
 
-const ID = 'preset-lite-settings';
+const ID = 'tavern-optimize-settings';
 const STATUS_INTERVAL_MS = 1000;
 const NOTICE_MS = 4000;
 
 const CONTROLS = Object.freeze({
-    enabled: 'preset_lite_enabled',
-    keepStaleNumbers: 'preset_lite_keep_stale',
-    coalescePresetEvents: 'preset_lite_coalesce',
-    reportPresetConflicts: 'preset_lite_report_conflicts',
-    persistentTokenCache: 'preset_lite_persist_cache',
+    enabled: 'tavern_optimize_enabled',
+    keepStaleNumbers: 'tavern_optimize_keep_stale',
+    coalescePresetEvents: 'tavern_optimize_coalesce',
+    reportPresetConflicts: 'tavern_optimize_report_conflicts',
+    persistentTokenCache: 'tavern_optimize_persist_cache',
 });
 
 const NUMBER_CONTROLS = Object.freeze({
-    idleDelayMs: 'preset_lite_idle_delay',
-    tokenCacheLimit: 'preset_lite_cache_limit',
+    idleDelayMs: 'tavern_optimize_idle_delay',
+    tokenCacheLimit: 'tavern_optimize_cache_limit',
 });
 
 const CHECKBOX_KEYS = Object.freeze(Object.keys(CONTROLS));
@@ -131,7 +131,7 @@ export function createSettingsPanel({ context, settings, runtime, diagnostics, i
      * @param {string} text
      */
     function setStatus(text) {
-        const node = document.getElementById('preset_lite_status');
+        const node = document.getElementById('tavern_optimize_status');
         if (node) {
             node.textContent = text;
         }
@@ -230,7 +230,7 @@ export function createSettingsPanel({ context, settings, runtime, diagnostics, i
             });
         }
 
-        document.getElementById('preset_lite_clear_cache')?.addEventListener('click', async () => {
+        document.getElementById('tavern_optimize_clear_cache')?.addEventListener('click', async () => {
             await runtime.clearCache();
             notify('token cache cleared');
         });
@@ -253,7 +253,7 @@ export function createSettingsPanel({ context, settings, runtime, diagnostics, i
 
             element = document.getElementById(ID);
             if (!element) {
-                diagnostics.warn('Settings template did not produce #preset-lite-settings');
+                diagnostics.warn('Settings template did not produce #tavern-optimize-settings');
                 return false;
             }
 

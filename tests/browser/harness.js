@@ -317,7 +317,7 @@ window.__harness = {
         return row ? row.getBoundingClientRect().height : 0;
     },
     publishedRowHeight: () => getComputedStyle(document.getElementById('completion_prompt_manager_list'))
-        .getPropertyValue('--tt-pl-row-height').trim(),
+        .getPropertyValue('--tt-to-row-height').trim(),
 
     /** Reset the scroll position for the next measurement. */
     scrollTo: value => { scroller.scrollTop = value; },

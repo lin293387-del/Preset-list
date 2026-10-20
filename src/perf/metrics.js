@@ -3,7 +3,7 @@
  * Timing of the extension's own work.
  *
  * Only spans are recorded: how long a panel sync takes and how long a recount
- * takes. They are exposed through `__PRESET_LITE__.snapshot()` so a slow device
+ * takes. They are exposed through `__TAVERN_OPTIMIZE__.snapshot()` so a slow device
  * can be diagnosed from the console without a profiler.
  */
 

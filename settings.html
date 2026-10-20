@@ -1,13 +1,13 @@
-<div id="preset-lite-settings" class="preset-lite-settings">
+<div id="tavern-optimize-settings" class="tavern-optimize-settings">
     <div class="inline-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
-            <b data-i18n="Preset Lite">Preset Lite</b>
+            <b data-i18n="Tavern Optimize">Tavern Optimize</b>
             <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down"></div>
         </div>
         <div class="inline-drawer-content">
-            <label class="checkbox_label" for="preset_lite_enabled">
-                <input type="checkbox" id="preset_lite_enabled">
-                <span data-i18n="Enable Preset Lite">Enable Preset Lite</span>
+            <label class="checkbox_label" for="tavern_optimize_enabled">
+                <input type="checkbox" id="tavern_optimize_enabled">
+                <span data-i18n="Enable Tavern Optimize">Enable Tavern Optimize</span>
             </label>
             <div class="toggle-description justifyLeft">
                 <span data-i18n="Reuses prompt rows instead of rebuilding the list and moves token recounts out of the interaction path. Turning this off restores stock behaviour without a reload.">
@@ -15,8 +15,8 @@
                 </span>
             </div>
 
-            <label class="checkbox_label" for="preset_lite_keep_stale">
-                <input type="checkbox" id="preset_lite_keep_stale">
+            <label class="checkbox_label" for="tavern_optimize_keep_stale">
+                <input type="checkbox" id="tavern_optimize_keep_stale">
                 <span data-i18n="Keep last known token numbers while recalculating">Keep last known token numbers while recalculating</span>
             </label>
             <div class="toggle-description justifyLeft">
@@ -25,8 +25,8 @@
                 </span>
             </div>
 
-            <label class="checkbox_label" for="preset_lite_coalesce">
-                <input type="checkbox" id="preset_lite_coalesce">
+            <label class="checkbox_label" for="tavern_optimize_coalesce">
+                <input type="checkbox" id="tavern_optimize_coalesce">
                 <span data-i18n="Coalesce preset apply events">Coalesce preset apply events</span>
             </label>
             <div class="toggle-description justifyLeft">
@@ -35,8 +35,8 @@
                 </span>
             </div>
 
-            <label class="checkbox_label" for="preset_lite_report_conflicts">
-                <input type="checkbox" id="preset_lite_report_conflicts">
+            <label class="checkbox_label" for="tavern_optimize_report_conflicts">
+                <input type="checkbox" id="tavern_optimize_report_conflicts">
                 <span data-i18n="Report preset field conflicts">Report preset field conflicts</span>
             </label>
             <div class="toggle-description justifyLeft">
@@ -45,8 +45,8 @@
                 </span>
             </div>
 
-            <label class="checkbox_label" for="preset_lite_persist_cache">
-                <input type="checkbox" id="preset_lite_persist_cache">
+            <label class="checkbox_label" for="tavern_optimize_persist_cache">
+                <input type="checkbox" id="tavern_optimize_persist_cache">
                 <span data-i18n="Persist the token cache">Persist the token cache</span>
             </label>
             <div class="toggle-description justifyLeft">
@@ -55,22 +55,22 @@
                 </span>
             </div>
 
-            <div class="preset-lite-grid">
-                <label for="preset_lite_idle_delay">
+            <div class="tavern-optimize-grid">
+                <label for="tavern_optimize_idle_delay">
                     <span data-i18n="Recount delay (ms)">Recount delay (ms)</span>
-                    <input type="number" id="preset_lite_idle_delay" class="text_pole" min="0" max="5000" step="50">
+                    <input type="number" id="tavern_optimize_idle_delay" class="text_pole" min="0" max="5000" step="50">
                 </label>
-                <label for="preset_lite_cache_limit">
+                <label for="tavern_optimize_cache_limit">
                     <span data-i18n="Token cache entries">Token cache entries</span>
-                    <input type="number" id="preset_lite_cache_limit" class="text_pole" min="100" max="200000" step="100">
+                    <input type="number" id="tavern_optimize_cache_limit" class="text_pole" min="100" max="200000" step="100">
                 </label>
             </div>
 
-            <div class="preset-lite-buttons flex-container">
-                <div class="menu_button" id="preset_lite_clear_cache" data-i18n="Clear token cache">Clear token cache</div>
+            <div class="tavern-optimize-buttons flex-container">
+                <div class="menu_button" id="tavern_optimize_clear_cache" data-i18n="Clear token cache">Clear token cache</div>
             </div>
 
-            <div id="preset_lite_status" class="preset-lite-status"></div>
+            <div id="tavern_optimize_status" class="tavern-optimize-status"></div>
         </div>
     </div>
 </div>

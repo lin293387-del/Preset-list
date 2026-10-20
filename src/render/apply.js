@@ -19,7 +19,7 @@ export function createNodeFromHtml(html) {
     template.innerHTML = String(html).trim();
     const node = template.content.firstElementChild;
     if (!node) {
-        throw new Error('[Preset Lite] Row markup produced no element');
+        throw new Error('[Tavern Optimize] Row markup produced no element');
     }
     return node;
 }

@@ -1,6 +1,6 @@
 {
-    "Preset Lite": "预设轻量化",
-    "Enable Preset Lite": "启用预设轻量化",
+    "Tavern Optimize": "预设轻量化",
+    "Enable Tavern Optimize": "启用预设轻量化",
     "Reuses prompt rows instead of rebuilding the list and moves token recounts out of the interaction path. Turning this off restores stock behaviour without a reload.": "复用提示词行而不是整体重建列表，并把 token 重算移出交互路径。关闭后立即恢复原生行为，无需刷新。",
     "Keep last known token numbers while recalculating": "重算期间保留上一次的 token 数字",
     "When off, token numbers show - until the recount finishes (stock behaviour).": "关闭后，重算完成前 token 数字显示为 -（与原生行为一致）。",

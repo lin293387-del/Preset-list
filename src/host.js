@@ -13,7 +13,7 @@ import { getContext as getPageContext } from '/scripts/extensions.js';
 export function getContext() {
     const context = getPageContext();
     if (!context || typeof context !== 'object') {
-        throw new Error('[Preset Lite] SillyTavern context is unavailable');
+        throw new Error('[Tavern Optimize] SillyTavern context is unavailable');
     }
     return context;
 }
@@ -65,7 +65,7 @@ export function resolveExtensionIdentity(moduleUrl) {
     const resourceRoot = new URL('./', moduleUrl);
     const match = /^\/scripts\/extensions\/(.+)\/$/.exec(resourceRoot.pathname);
     if (!match) {
-        throw new Error(`[Preset Lite] Unexpected extension location: ${resourceRoot.pathname}`);
+        throw new Error(`[Tavern Optimize] Unexpected extension location: ${resourceRoot.pathname}`);
     }
 
     const name = match[1];

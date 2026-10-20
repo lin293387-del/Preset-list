@@ -59,7 +59,7 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
     const cache = createTokenCountCache({
         settings,
         diagnostics,
-        namespace: 'preset-lite',
+        namespace: 'tavern-optimize',
         resolveModel: getTokenizerModel,
         metrics,
     });
@@ -321,7 +321,7 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
             return;
         }
         sorting = next;
-        document.body?.classList.toggle('tt-pl-dragging', next);
+        document.body?.classList.toggle('tt-to-dragging', next);
         if (next) {
             scheduler.noteInteraction('drag');
         } else {
@@ -491,11 +491,11 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
         if (jQuery?.fn?.on) {
             const onSortStart = () => setSorting(true);
             const onSortEnd = () => setSorting(false);
-            jQuery(document).on('sortstart.ttPresetLite sortbegin.ttPresetLite', onSortStart);
-            jQuery(document).on('sortstop.ttPresetLite sortend.ttPresetLite', onSortEnd);
+            jQuery(document).on('sortstart.ttTavernOptimize sortbegin.ttTavernOptimize', onSortStart);
+            jQuery(document).on('sortstop.ttTavernOptimize sortend.ttTavernOptimize', onSortEnd);
             disposers.push(() => {
-                jQuery(document).off('sortstart.ttPresetLite sortbegin.ttPresetLite', onSortStart);
-                jQuery(document).off('sortstop.ttPresetLite sortend.ttPresetLite', onSortEnd);
+                jQuery(document).off('sortstart.ttTavernOptimize sortbegin.ttTavernOptimize', onSortStart);
+                jQuery(document).off('sortstop.ttTavernOptimize sortend.ttTavernOptimize', onSortEnd);
             });
         }
 
@@ -573,7 +573,7 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
     }
 
     const unsubscribeSettings = settings.subscribe(() => {
-        document.body?.classList.toggle('tt-pl-on', settings.get().enabled);
+        document.body?.classList.toggle('tt-to-on', settings.get().enabled);
         if (!settings.get().enabled) {
             presetWindow.flushNow('disabled');
             // Write the real numbers back before upstream takes over again.
@@ -603,7 +603,7 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
                 throw new Error('PromptManager renderer references were not captured');
             }
             patch.patchExistingInstance();
-            document.body?.classList.toggle('tt-pl-on', settings.get().enabled);
+            document.body?.classList.toggle('tt-to-on', settings.get().enabled);
 
             if (jQuery?.fn?.trigger) {
                 presetWindow.install(jQuery);
@@ -617,7 +617,7 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
             void cache.ensureLoaded();
             requestPanelSync('start');
             scheduler.schedule('start');
-            diagnostics.info(`Preset Lite ${VERSION} started (${identity.folder})`);
+            diagnostics.info(`Tavern Optimize ${VERSION} started (${identity.folder})`);
         },
 
         stop() {
@@ -628,10 +628,10 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
             scheduler.stop();
             presetWindow.uninstall();
             patch.uninstall();
-            document.body?.classList.remove('tt-pl-dragging');
-            document.body?.classList.remove('tt-pl-on');
+            document.body?.classList.remove('tt-to-dragging');
+            document.body?.classList.remove('tt-to-on');
             hooks.onStop?.();
-            diagnostics.info('Preset Lite stopped');
+            diagnostics.info('Tavern Optimize stopped');
         },
 
         requestPanelSync,
