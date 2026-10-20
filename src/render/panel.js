@@ -4,19 +4,29 @@
  *
  * Upstream renders the panel by clearing `#completion_prompt_manager` and
  * rebuilding header, footer and every row. That work is repeated for every
- * interaction and is what makes the panel feel heavy.
+ * interaction and is what makes the panel feel heavy: the row builder alone
+ * (HTML assembly + one `insertAdjacentHTML` + four listener lookups per row)
+ * dominates a sync for long prompt lists.
  *
- * This module keeps the upstream markup as the single source of truth (rows and
- * structure are built by the *original* upstream methods into a detached
- * container) and only adopts what changed:
+ * The sync therefore picks the cheapest path that can still be correct:
  *
- * - the container/header/footer are built once and reused,
- * - rows are reconciled by `data-pm-identifier`,
- * - token numbers are written in place instead of rebuilding the list.
+ * - **fast path** — the prompt model and every row signature are unchanged, so
+ *   only the token cells and the total are written in place; upstream is not
+ *   called at all. This is what a finished recount and an idle panel hit.
+ * - **local rebuild** — a single row changed: upstream still builds the markup
+ *   (single source of truth) but is pointed at that one prompt, so one row is
+ *   assembled instead of the whole list.
+ * - **full rebuild** — anything else (add, delete, reorder, character change,
+ *   a different error) rebuilds every row, which is the only safe answer when
+ *   the row set itself moved.
+ *
+ * Every fast path is guarded by the same checks the slow path relies on, and a
+ * guard that does not hold simply means the slow path runs; it is never a
+ * silent no-op.
  */
 
 import { RowParseError, extractRowMeta, planRowOps } from './plan.js';
-import { applyRowPlan, syncHeadNodes } from './apply.js';
+import { applyLocalRows, applyRowPlan, syncHeadNodes, updateTokenNumbers } from './apply.js';
 
 /** Consecutive unexpected render failures before the extension steps aside. */
 const MAX_SYNC_FAILURES = 3;
@@ -45,6 +55,16 @@ export function createPanelState() {
         delegationTarget: null,
         delegationHandler: null,
         lastStats: null,
+        /** Which path the last sync took: `tokens`, `local`, `chrome` or `full`. */
+        lastPath: null,
+        /** Per-prompt fingerprint of everything the upstream row template reads. */
+        rowSignatures: new Map(),
+        /** Instance-wide inputs of the row template (token usage, budgets, overrides). */
+        rowGlobals: '',
+        /** Watches the first row so the CSS placeholder height matches reality. */
+        rowObserver: null,
+        rowObserverTarget: null,
+        rowObserverList: null,
     };
 }
 
@@ -90,6 +110,62 @@ function preserveScroll(element) {
             }
         },
     };
+}
+
+/**
+ * Publishes the measured row height as a CSS custom property.
+ *
+ * The stylesheet skips painting rows that are scrolled out of view, and a skipped
+ * row can only contribute a *guessed* height to the scroll range. Guessing wrong
+ * is what makes a fast fling look broken: the browser reserves too little (or too
+ * much) space, the scrollbar jumps, and rows that are flung into view are laid out
+ * from a stale guess. Publishing the height a row really has keeps the scroll
+ * range honest without forcing a layout in the sync path — the observer reports it
+ * only when it changes (theme, font size, row content).
+ *
+ * @param {object} state
+ * @param {HTMLElement} listElement
+ */
+function observeRowMetrics(state, listElement) {
+    const first = listElement.querySelector('li[data-pm-identifier]');
+    if (!first) {
+        return;
+    }
+    // Rows survive a structural rebuild, so the row node alone cannot tell whether
+    // this list element has already been measured: a rebuild hands the same rows to
+    // a brand-new `<ul>`, which still needs the property.
+    if (state.rowObserverTarget === first && state.rowObserver && state.rowObserverList === listElement) {
+        return;
+    }
+
+    const publish = () => {
+        const height = first.getBoundingClientRect().height;
+        if (height > 0) {
+            listElement.style.setProperty('--tt-pl-row-height', `${height.toFixed(2)}px`);
+        }
+    };
+
+    if (typeof ResizeObserver !== 'function') {
+        publish();
+        return;
+    }
+
+    state.rowObserver?.disconnect();
+    state.rowObserver = new ResizeObserver(publish);
+    state.rowObserver.observe(first);
+    state.rowObserverTarget = first;
+    state.rowObserverList = listElement;
+    publish();
+}
+
+/**
+ * @param {object} state
+ */
+function stopRowMetrics(state) {
+    state.rowObserver?.disconnect();
+    state.rowObserver = null;
+    state.rowObserverTarget = null;
+    state.rowObserverList = null;
 }
 
 /**
@@ -321,6 +397,7 @@ async function rebuildStructure(context) {
         diagnostics.warn('Prompt reorder could not be initialized by the plugin:', error);
     }
     installRowDelegation(instance, state);
+    observeRowMetrics(state, state.listElement);
 
     state.structureSignature = structureSignature(instance);
     state.errorSignature = instance.error;
@@ -343,6 +420,48 @@ function currentRowKeys(listElement) {
 }
 
 /**
+ * @param {HTMLElement} listElement
+ * @returns {Element[]}
+ */
+function rowNodes(listElement) {
+    return Array.from(listElement.children).filter(node => node.getAttribute('data-pm-identifier'));
+}
+
+/**
+ * The prompt model upstream would render, in render order.
+ *
+ * A failed lookup throws instead of returning an empty list: "no prompts" and
+ * "cannot tell" must never look the same to a caller that decides whether it may
+ * reuse what is on screen.
+ *
+ * @param {any} instance
+ * @returns {string[]}
+ */
+function promptModelKeys(instance) {
+    let keys;
+    try {
+        keys = instance.getPromptsForCharacter?.(instance.activeCharacter)
+            ?.filter(Boolean)
+            ?.map(prompt => String(prompt.identifier));
+    } catch (error) {
+        throw new RowParseError(`Prompt model lookup failed: ${error instanceof Error ? error.message : error}`);
+    }
+    if (!Array.isArray(keys)) {
+        throw new RowParseError('Prompt model lookup is unavailable; cannot verify rendered rows');
+    }
+    return keys;
+}
+
+/**
+ * @param {string[]} expected
+ * @param {Array<{ key: string }>} rows
+ * @returns {boolean}
+ */
+function rowsMatchKeys(expected, rows) {
+    return rows.length === expected.length && rows.every((row, index) => row.key === expected[index]);
+}
+
+/**
  * Cross-checks the freshly built rows against the prompt model upstream renders
  * from. A mismatch means the upstream list markup changed shape (or another
  * extension rewrote it), and reconciling would silently drop rows, so callers
@@ -352,18 +471,8 @@ function currentRowKeys(listElement) {
  * @param {Array<{ key: string }>} nextRows
  */
 function assertRowsMatchPromptModel(instance, nextRows) {
-    let expectedKeys;
-    try {
-        expectedKeys = instance.getPromptsForCharacter?.(instance.activeCharacter)
-            ?.filter(Boolean)
-            ?.map(prompt => String(prompt.identifier));
-    } catch (error) {
-        throw new RowParseError(`Prompt model lookup failed: ${error instanceof Error ? error.message : error}`);
-    }
-    if (!Array.isArray(expectedKeys)) {
-        throw new RowParseError('Prompt model lookup is unavailable; cannot verify rendered rows');
-    }
-    if (nextRows.length !== expectedKeys.length || nextRows.some((row, index) => row.key !== expectedKeys[index])) {
+    const expectedKeys = promptModelKeys(instance);
+    if (!rowsMatchKeys(expectedKeys, nextRows)) {
         throw new RowParseError(
             `Rendered rows do not match the prompt model (rendered ${nextRows.length}, expected ${expectedKeys.length})`,
         );
@@ -371,23 +480,151 @@ function assertRowsMatchPromptModel(instance, nextRows) {
 }
 
 /**
- * Builds rows with the upstream renderer in a detached list and applies the diff.
+ * The inputs of the upstream row template that do not belong to a single prompt.
+ *
+ * The chat-history warning is the only cross-row input: it appears when the total
+ * usage crosses 80% of the context budget, so the *boolean* is what matters, not
+ * the usage itself. Putting the raw number here would make every recount look
+ * like a change and would throw away the token-only path exactly when it is most
+ * useful. The remaining entries change rarely (character, override lists).
+ *
+ * @param {any} instance
+ * @returns {string}
+ */
+function rowGlobals(instance) {
+    const settings = instance?.serviceSettings ?? {};
+    const overridable = Array.isArray(instance?.overridablePrompts) ? instance.overridablePrompts.join(',') : '';
+    const overridden = Array.isArray(instance?.overriddenPrompts) ? instance.overriddenPrompts.join(',') : '';
+    const budget = Number(settings.openai_max_context ?? 0) - Number(settings.openai_max_tokens ?? 0);
+    const usage = Number(instance?.tokenUsage ?? 0);
+    // The warning markup is the one thing a row can pick up from global state.
+    const overBudget = budget > 0 && usage > budget * 0.8;
+    return [
+        instance?.activeCharacter?.id ?? 'null',
+        overBudget ? 'over-budget' : 'under-budget',
+        settings.openai_max_context ?? 0,
+        settings.openai_max_tokens ?? 0,
+        instance?.configuration?.prefix ?? '',
+        overridable,
+        overridden,
+    ].join('\u0001');
+}
+
+/**
+ * Fingerprint of everything the upstream row template reads for one prompt.
+ *
+ * `content` is deliberately absent: it never reaches the row markup, it only
+ * feeds the token count, which the token stamp already covers. Editing a prompt
+ * therefore costs nothing until the numbers come back.
+ *
+ * A prompt whose set of own keys differs from the one seen at the last full
+ * render returns `null`: upstream may have started reading a field this
+ * fingerprint does not know about, and only a full rebuild is safe then.
+ *
+ * @param {any} instance
+ * @param {any} prompt
+ * @param {string} globals
+ * @returns {string | null}
+ */
+function rowSignature(instance, prompt, globals) {
+    if (!prompt) {
+        return null;
+    }
+    const entry = instance.getPromptOrderEntry?.(instance.activeCharacter, prompt.identifier);
+    const position = typeof prompt.injection_position === 'number' ? prompt.injection_position : 0;
+    return [
+        globals,
+        prompt.identifier,
+        prompt.name,
+        prompt.role,
+        prompt.marker === true ? 'm' : '',
+        prompt.system_prompt === true ? 's' : '',
+        prompt.forbid_overrides === true ? 'f' : '',
+        position,
+        prompt.injection_depth ?? '',
+        prompt.attach_side ?? '',
+        prompt.attach_role ?? '',
+        prompt.attach_index ?? '',
+        entry ? (entry.enabled ? 'on' : 'off') : 'none',
+    ].join('\u0002');
+}
+
+/**
+ * @param {any} prompt
+ * @returns {string}
+ */
+function promptShape(prompt) {
+    return prompt && typeof prompt === 'object' ? Object.keys(prompt).sort().join(',') : '';
+}
+
+/**
+ * Refreshes the per-prompt fingerprints from the model the panel was just synced
+ * against. Runs after every sync that rendered rows, so the next sync compares
+ * against what is really on screen.
  *
  * @param {object} context
- * @returns {Promise<object>} Applied plan statistics.
  */
-async function syncRows(context) {
+function captureRowSignatures(context) {
+    const { instance, state } = context;
+    const globals = rowGlobals(instance);
+    state.rowGlobals = globals;
+    state.rowSignatures = new Map();
+    let prompts;
+    try {
+        prompts = instance.getPromptsForCharacter?.(instance.activeCharacter);
+    } catch {
+        return;
+    }
+    if (!Array.isArray(prompts)) {
+        return;
+    }
+    for (const prompt of prompts) {
+        if (!prompt) {
+            continue;
+        }
+        const key = String(prompt.identifier);
+        const signature = rowSignature(instance, prompt, globals);
+        state.rowSignatures.set(key, signature === null ? null : `${signature}\u0003${promptShape(prompt)}`);
+    }
+}
+
+/**
+ * Renders rows with the upstream builder into a detached list.
+ *
+ * @param {object} context
+ * @param {string[] | null} onlyKeys When set, the upstream builder is pointed at
+ *   these prompts only, so it assembles those rows instead of the whole list.
+ * @returns {Promise<{ headNodes: Element[], nextRows: Array<{ key: string, structure: string, tokenValue: string, tokenInner: string, html: string }> }>}
+ */
+async function buildRows(context, onlyKeys = null) {
     const { instance, originals, state } = context;
     const liveList = state.listElement;
     const scratchList = document.createElement('ul');
     scratchList.className = liveList.className;
 
     const previousList = instance.listElement;
+    const originalSelector = instance.getPromptsForCharacter;
+    const scoped = Array.isArray(onlyKeys) && onlyKeys.length > 0;
+    const wanted = new Set(onlyKeys ?? []);
+
     instance.listElement = scratchList;
+    if (scoped) {
+        // The upstream builder iterates exactly what this returns, so narrowing it
+        // is all it takes to assemble a subset. The override is scoped to this one
+        // call and removed again in `finally`.
+        instance.getPromptsForCharacter = function scopedPrompts(character) {
+            const all = originalSelector.call(this, character);
+            return Array.isArray(all) ? all.filter(prompt => prompt && wanted.has(String(prompt.identifier))) : all;
+        };
+    }
+
     try {
         await originals.renderPromptManagerListItems.call(instance);
     } finally {
         instance.listElement = previousList;
+        if (scoped) {
+            instance.getPromptsForCharacter = originalSelector;
+        }
     }
 
     const headNodes = [];
@@ -401,6 +638,123 @@ async function syncRows(context) {
         const html = node.outerHTML;
         const meta = extractRowMeta(html);
         nextRows.push({ ...meta, html });
+    }
+
+    return { headNodes, nextRows };
+}
+
+/**
+ * Writes the token numbers straight into the rows that are already on screen.
+ *
+ * This is the cheapest sync there is: the prompt model, the row set and every
+ * row's markup are unchanged, so upstream does not have to produce anything.
+ * Callers must have verified that much — `syncPanelNow` does.
+ *
+ * @param {object} context
+ * @returns {object} Plan statistics.
+ */
+function syncTokensOnly(context) {
+    const { instance, state } = context;
+    if (state.placeholderApplied) {
+        // The placeholder owns the cells right now; writing numbers here would
+        // undo it until the next presentation pass. `forceTokenKeys` stays armed,
+        // so the numbers come back the moment the placeholder is dropped.
+        const stats = { created: 0, updated: 0, tokens: 0, removed: 0, moved: 0, rebuilt: 0, replaced: 0 };
+        state.lastStats = stats;
+        state.lastPath = 'tokens';
+        return stats;
+    }
+    const liveList = state.listElement;
+    const counts = instance?.tokenHandler?.getCounts?.() ?? {};
+    const values = new Map();
+
+    for (const node of rowNodes(liveList)) {
+        const key = node.getAttribute('data-pm-identifier');
+        if (!key) {
+            continue;
+        }
+        const count = counts[key];
+        const value = count ? String(count) : '-';
+        if (state.forceTokenKeys.has(key) || !state.previousByKey.has(key)) {
+            values.set(key, { value });
+            continue;
+        }
+        const cell = node.querySelector('.prompt_manager_prompt_tokens');
+        if (!cell || cell.getAttribute('data-pm-tokens') !== value) {
+            values.set(key, { value });
+        }
+    }
+
+    const applied = updateTokenNumbers(liveList, values);
+    const stats = { created: 0, updated: 0, tokens: applied.tokens, removed: 0, moved: 0, rebuilt: applied.rebuilt, replaced: 0 };
+
+    // A row whose cell could not be patched in place has to be rendered again on
+    // the next sync; dropping it from the index is enough to force that.
+    if (applied.rebuilt > 0) {
+        for (const node of rowNodes(liveList)) {
+            if (!node.querySelector('.prompt_manager_prompt_tokens')) {
+                const key = node.getAttribute('data-pm-identifier');
+                state.nodeByKey.delete(key);
+                state.previousByKey.delete(key);
+            }
+        }
+    }
+
+    state.forceTokenKeys = new Set();
+    state.lastStats = stats;
+    state.lastPath = 'tokens';
+    return stats;
+}
+
+/**
+ * Builds rows with the upstream renderer in a detached list and applies the diff.
+ *
+ * @param {object} context
+ * @param {string[] | null} onlyKeys Narrow the upstream build to these prompts.
+ * @returns {Promise<object>} Applied plan statistics.
+ */
+async function syncRows(context, onlyKeys = null) {
+    const { instance, state } = context;
+    const liveList = state.listElement;
+    const { headNodes, nextRows } = await buildRows(context, onlyKeys);
+    const narrowed = Array.isArray(onlyKeys) && onlyKeys.length > 0;
+
+    if (narrowed) {
+        // A narrowed build cannot be cross-checked against the whole model; it is
+        // verified against the rows it was asked to produce instead.
+        const built = nextRows.map(row => row.key);
+        const missing = onlyKeys.filter(key => !built.includes(key));
+        if (missing.length > 0) {
+            throw new RowParseError(`Upstream did not render the requested row(s): ${missing.join(', ')}`);
+        }
+        syncHeadNodes(liveList, headNodes);
+
+        const stats = applyLocalRows({
+            listElement: liveList,
+            rows: nextRows,
+            nodeByKey: state.nodeByKey,
+            previousByKey: state.previousByKey,
+        });
+        if (stats.missing > 0) {
+            // The rows on screen are not the ones this sync assumed; rebuild them
+            // instead of leaving a half-applied update behind.
+            throw new RowParseError(`${stats.missing} row(s) to re-render were no longer in the list`);
+        }
+        state.forceTokenKeys = new Set();
+        for (const row of nextRows) {
+            state.previousByKey.set(row.key, row);
+        }
+        state.lastStats = {
+            created: 0,
+            updated: stats.updated,
+            tokens: stats.tokens,
+            removed: 0,
+            moved: 0,
+            rebuilt: stats.rebuilt,
+            replaced: 0,
+        };
+        state.lastPath = 'local';
+        return state.lastStats;
     }
 
     assertRowsMatchPromptModel(instance, nextRows);
@@ -417,7 +771,30 @@ async function syncRows(context) {
     state.forceTokenKeys = new Set();
     state.previousByKey = new Map(nextRows.map(row => [row.key, row]));
     state.lastStats = stats;
+    state.lastPath = 'full';
+    observeRowMetrics(state, liveList);
     return stats;
+}
+
+/**
+ * Which prompts can be re-rendered on their own.
+ *
+ * Upstream decides a row's markup from that prompt's own fields plus the
+ * character's order entry, with one exception: the chat-history warning also
+ * depends on the total token usage and the configured budget. A row that carries
+ * such a warning is therefore never re-rendered alone.
+ *
+ * @param {object} state
+ * @param {string[]} keys
+ * @returns {string[]}
+ */
+function locallyRenderableKeys(state, keys) {
+    return keys.filter(key => {
+        const previous = state.previousByKey.get(key);
+        // The warning cell is the first child of the token cell and carries the
+        // warning classes; a row that has one depends on more than itself.
+        return Boolean(previous) && !previous.tokenInner.includes('fa-triangle-exclamation');
+    });
 }
 
 /**
@@ -488,6 +865,74 @@ function applyStalePresentation(context) {
 }
 
 /**
+ * Decides how much of the panel really has to be rendered.
+ *
+ * `chrome` refreshes the header/footer only, `local` re-renders the rows whose
+ * prompt model entry changed, `full` rebuilds every row. Anything unexpected
+ * resolves to `full`: a guard that does not hold must cost time, never
+ * correctness.
+ *
+ * @param {object} context
+ * @param {string[]} modelKeys
+ * @returns {{ path: 'chrome' | 'local' | 'full', keys: string[] }}
+ */
+function choosePath(context, modelKeys) {
+    const { instance, state } = context;
+    const globals = rowGlobals(instance);
+    if (globals !== state.rowGlobals) {
+        // Token usage, context budget, override lists or the character changed:
+        // every row may look different.
+        return { path: 'full', keys: modelKeys };
+    }
+
+    const changed = modelKeys.filter(key => {
+        const prompt = instance.getPromptById?.(key);
+        const signature = rowSignature(instance, prompt, globals);
+        const stored = state.rowSignatures.get(key);
+        if (signature === null || stored === undefined) {
+            return true;
+        }
+        return stored !== `${signature}\u0003${promptShape(prompt)}`;
+    });
+
+    if (changed.length === 0) {
+        return { path: 'chrome', keys: [] };
+    }
+    if (changed.length === modelKeys.length) {
+        return { path: 'full', keys: modelKeys };
+    }
+    return { path: 'local', keys: changed };
+}
+
+/**
+ * Makes the active render path visible in the console the first time it is used.
+ *
+ * The extension's whole point is to skip upstream work, and a skipped path is
+ * invisible by definition. One line per path, once per session, is enough to tell
+ * "the fast path is running" from "everything silently fell back to a full
+ * rebuild" in the host's log viewer.
+ *
+ * @param {object} context
+ */
+function announcePath(context) {
+    const { state, diagnostics } = context;
+    const path = state.lastPath;
+    if (!path) {
+        return;
+    }
+    const describe = {
+        tokens: 'token-only sync (no upstream render)',
+        local: 'local row rebuild (only the changed rows were re-rendered)',
+        full: 'full row rebuild',
+    };
+    const label = describe[path];
+    if (!label) {
+        return;
+    }
+    diagnostics.announce?.(`path-${path}`, `render path: ${label}`);
+}
+
+/**
  * @param {object} context
  * @returns {Promise<void>}
  */
@@ -509,9 +954,39 @@ async function syncPanelNow(context) {
             await rebuildStructure(context);
         }
 
-        await syncRows(context);
-        updateTotal(context);
+        // Presentation first: it decides whether the cells currently show a
+        // placeholder, and the render path has to know that before it writes.
         applyStalePresentation(context);
+
+        const modelKeys = promptModelKeys(instance);
+        const live = rowNodes(state.listElement);
+        const liveKeys = live.map(node => node.getAttribute('data-pm-identifier'));
+        const rowsIntact = liveKeys.length === modelKeys.length
+            && liveKeys.every((key, index) => key === modelKeys[index])
+            && live.every(node => state.nodeByKey.get(node.getAttribute('data-pm-identifier')) === node);
+
+        const decision = rowsIntact
+            ? choosePath(context, modelKeys)
+            : { path: /** @type {'full'} */ ('full'), keys: modelKeys };
+
+        if (decision.path === 'chrome') {
+            // No row can look different, so only the numbers have to be written.
+            syncTokensOnly(context);
+        } else {
+            const keys = decision.path === 'local' ? locallyRenderableKeys(state, decision.keys) : [];
+            const narrowed = keys.length > 0 && keys.length < modelKeys.length ? keys : null;
+            await syncRows(context, narrowed);
+        }
+
+        if (state.lastPath !== 'tokens') {
+            // Rows were just built from the model, so they show real numbers again;
+            // let the presentation decide whether they have to be hidden.
+            state.placeholderApplied = false;
+            applyStalePresentation(context);
+            captureRowSignatures(context);
+        }
+        updateTotal(context);
+        announcePath(context);
     } finally {
         // The sync may have emptied the list while it built the new markup, which
         // makes the browser clamp the offset to the top. Restore it here instead of
@@ -563,6 +1038,7 @@ export async function fullRebuild(context) {
     // The stock renderer rebuilds every row, so only the scroll offset is worth
     // carrying across: an emptied list collapses the scroller to its top.
     const scroll = preserveScroll(instance.containerElement);
+    stopRowMetrics(state);
     state.listElement = null;
     state.nodeByKey = new Map();
     state.previousByKey = new Map();

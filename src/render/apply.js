@@ -158,6 +158,101 @@ export function applyRowPlan({ listElement, plan, nodeByKey }) {
 }
 
 /**
+ * Applies rows that were re-rendered on their own.
+ *
+ * Unlike `applyRowPlan` this never removes or reorders anything: the caller
+ * verified that the row set and its order are unchanged and only handed over the
+ * rows whose prompt model entry moved. A plan built from a partial row set would
+ * look like "every other row was deleted", which is exactly what must not happen.
+ *
+ * @param {object} input
+ * @param {Element} input.listElement
+ * @param {Array<{ key: string, structure: string, tokenValue: string, tokenInner: string, html: string }>} input.rows
+ * @param {Map<string, Element>} input.nodeByKey
+ * @param {Map<string, { structure: string, tokenValue: string, tokenInner: string }>} input.previousByKey
+ * @returns {{ updated: number, tokens: number, rebuilt: number, missing: number }}
+ */
+export function applyLocalRows({ listElement, rows, nodeByKey, previousByKey }) {
+    const stats = { updated: 0, tokens: 0, rebuilt: 0, missing: 0 };
+
+    for (const row of rows) {
+        const node = nodeByKey.get(row.key);
+        if (!node || !listElement.contains(node)) {
+            stats.missing += 1;
+            continue;
+        }
+
+        const previous = previousByKey.get(row.key);
+        if (previous && previous.structure === row.structure) {
+            // Only the number moved: patch the cell, keep the node.
+            if (applyTokenUpdate(node, { value: row.tokenValue, inner: row.tokenInner })) {
+                stats.tokens += 1;
+            } else {
+                const replacement = createNodeFromHtml(row.html);
+                node.replaceWith(replacement);
+                nodeByKey.set(row.key, replacement);
+                stats.rebuilt += 1;
+            }
+            continue;
+        }
+
+        const replacement = createNodeFromHtml(row.html);
+        node.replaceWith(replacement);
+        nodeByKey.set(row.key, replacement);
+        stats.updated += 1;
+    }
+
+    return stats;
+}
+
+/**
+ * Replaces only the token numbers of rows that are already on screen.
+ *
+ * The upstream token cell is `<span class="..._tokens" data-pm-tokens="N"><span
+ * class="warning" title="..."> </span>N</span>`: the warning markup stays
+ * untouched and only the trailing text node is rewritten, so this never
+ * duplicates the row template.
+ *
+ * @param {Element} listElement
+ * @param {Map<string, { value: string }>} valuesByKey
+ * @returns {{ tokens: number, rebuilt: number }}
+ */
+export function updateTokenNumbers(listElement, valuesByKey) {
+    let tokens = 0;
+    let rebuilt = 0;
+
+    for (const node of Array.from(listElement.children)) {
+        const key = node.getAttribute('data-pm-identifier');
+        if (!key) {
+            continue;
+        }
+        const update = valuesByKey.get(key);
+        if (!update) {
+            continue;
+        }
+        const cell = findTokenCell(node);
+        if (!cell) {
+            rebuilt += 1;
+            continue;
+        }
+        if (cell.getAttribute(TOKEN_VALUE_ATTRIBUTE) === update.value
+            && String(cell.lastChild?.nodeValue ?? '').trim() === update.value) {
+            continue;
+        }
+        cell.setAttribute(TOKEN_VALUE_ATTRIBUTE, update.value);
+        const last = cell.lastChild;
+        if (last && last.nodeType === 3) {
+            last.nodeValue = update.value;
+        } else {
+            cell.appendChild(document.createTextNode(update.value));
+        }
+        tokens += 1;
+    }
+
+    return { tokens, rebuilt };
+}
+
+/**
  * Replaces the static list header rows (the "Name / Tokens" head and separator)
  * when the freshly built ones differ.
  *

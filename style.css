@@ -98,11 +98,18 @@ body.tt-pl-on .tt-pl-stale .prompt_manager_prompt_tokens {
  * Long prompt lists: rows scrolled out of the viewport are skipped by the
  * renderer instead of being laid out and painted after every interaction. This
  * mirrors what the host already does for chat messages.
+ *
+ * A skipped row still has to occupy space in the scroll range, and the browser
+ * takes that space from `contain-intrinsic-block-size`. A fixed value there is
+ * the classic source of "fast fling looks broken": the placeholder is shorter or
+ * taller than the real row, so the scrollbar, the scroll range and every row
+ * flung into view are all measured against a guess. `--tt-pl-row-height` is
+ * published from the real row by the renderer, so the reserved space is exact.
  */
-@supports (content-visibility: auto) and (contain-intrinsic-block-size: auto 1.9rem) {
+@supports (content-visibility: auto) {
     body.tt-pl-on #completion_prompt_manager_list > li.completion_prompt_manager_prompt {
         content-visibility: auto;
-        contain-intrinsic-block-size: auto 1.9rem;
+        contain-intrinsic-block-size: auto var(--tt-pl-row-height, 2.25rem);
     }
 
     /* Row measurements must be exact while jQuery UI computes drop positions. */
@@ -111,3 +118,12 @@ body.tt-pl-on .tt-pl-stale .prompt_manager_prompt_tokens {
         contain-intrinsic-block-size: none;
     }
 }
+
+/*
+ * Deliberately nothing changes during a scroll. Switching rows to
+ * `content-visibility: visible` while the user flings the list forces a layout and
+ * a repaint of every row at the exact moment the gesture needs the frame, which is
+ * a guaranteed visible stall. The renderer instead writes nothing at all while a
+ * gesture is held (see `src/gesture.js`), so skipping stays on and no row is ever
+ * re-laid-out mid-fling.
+ */

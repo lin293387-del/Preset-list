@@ -197,6 +197,7 @@ describe('panel DOM integration', { skip: Window ? false : 'happy-dom is not ins
                 error() {},
                 degrade() {},
                 noteOnce() {},
+                announce() {},
             },
             isPending: () => pending,
         };
@@ -563,6 +564,9 @@ describe('panel DOM integration', { skip: Window ? false : 'happy-dom is not ins
             this.listElement.innerHTML = '<li class="row-without-identifier">oops</li>';
         };
 
+        // The panel only renders when the model moved, so make it move: a prompt
+        // rename is the cheapest change that still requires upstream markup.
+        prompts[0].name = 'Main Prompt (renamed)';
         await syncPanel(harness.context);
 
         assert.equal(harness.context.state.structureInvalid, true, 'markup mismatch must degrade instead of reconciling');
