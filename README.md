@@ -141,7 +141,7 @@ keep showing `-`.
 
 ```
 npm install          # devDependencies: typescript, happy-dom
-npm test             # 97 tests: pure logic, panel DOM reconciliation, patch layer, runtime smoke
+npm test             # 94 tests: pure logic, panel DOM reconciliation, patch layer, runtime smoke
 npm run typecheck    # tsc --noEmit with checkJs (JSDoc types, no build step)
 ```
 
