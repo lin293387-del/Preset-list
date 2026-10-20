@@ -62,7 +62,9 @@ function getScrollTop(element) {
  * @param {number} value
  */
 function setScrollTop(element, value) {
-    const scroller = element.closest('.scrollableInner') ?? null;
+    const scroller = element.closest('.scrollableInner')
+        ?? element.parentElement?.closest?.('.scrollableInner')
+        ?? null;
     if (scroller) {
         scroller.scrollTop = value;
     }
@@ -210,7 +212,62 @@ function installRowDelegation(instance, state) {
 }
 
 /**
+ * Adopts the rows rendered before a structural rebuild.
+ *
+ * They are moved into the new list instead of being discarded with the old
+ * structure, so the scroll container never loses its height, and they are
+ * re-indexed from their own markup so the diff below can tell a row that only
+ * changed its token number from one that really has to be rebuilt.
+ *
+ * @param {object} state
+ * @returns {Element[]}
+ */
+function takeLiveRows(state) {
+    const list = state.listElement;
+    const rows = list ? Array.from(list.children).filter(node => node.getAttribute('data-pm-identifier')) : [];
+    state.nodeByKey = new Map();
+    state.previousByKey = new Map();
+    for (const node of rows) {
+        try {
+            const meta = extractRowMeta(node.outerHTML);
+            state.previousByKey.set(meta.key, meta);
+            state.nodeByKey.set(meta.key, node);
+        } catch {
+            // A row whose markup cannot be parsed is not indexed, so the next
+            // sync replaces it instead of trusting a stale node.
+        }
+    }
+    return rows;
+}
+
+/**
+ * Puts previously rendered rows back into a freshly built list.
+ *
+ * This is what keeps the panel from scrolling to the top: an emptied list
+ * collapses the scroll container, the browser clamps `scrollTop` to 0 while the
+ * list is empty, and the offset cannot be restored afterwards. The rows stay
+ * until their replacements are ready, so the container never loses its height.
+ *
+ * @param {Element | null} listElement
+ * @param {Element[]} rows
+ */
+function appendRows(listElement, rows) {
+    if (!listElement || rows.length === 0) {
+        return;
+    }
+    const fragment = document.createDocumentFragment();
+    for (const row of rows) {
+        fragment.appendChild(row);
+    }
+    listElement.appendChild(fragment);
+}
+
+/**
  * Rebuilds container/header/footer from upstream markup and adopts it.
+ *
+ * The rows rendered before the rebuild are moved into the new list instead of
+ * being discarded with the old structure, so the scroll position survives the
+ * empty window and the row diff below can reuse their nodes.
  *
  * @param {object} context
  * @returns {Promise<void>}
@@ -227,14 +284,13 @@ async function rebuildStructure(context) {
         restore();
     }
 
-    const scrollTop = getScrollTop(container);
+    const liveRows = takeLiveRows(state);
     container.replaceChildren(...Array.from(scratch.childNodes));
 
-    state.nodeByKey = new Map();
-    state.previousByKey = new Map();
     state.placeholderApplied = false;
 
     captureStructureRefs(instance, state, diagnostics);
+    appendRows(state.listElement, liveRows);
 
     instance.listElement = state.listElement;
     try {
@@ -243,10 +299,6 @@ async function rebuildStructure(context) {
         diagnostics.warn('Prompt reorder could not be initialized by the plugin:', error);
     }
     installRowDelegation(instance, state);
-
-    if (scrollTop !== null) {
-        setScrollTop(container, scrollTop);
-    }
 
     state.structureSignature = structureSignature(instance);
     state.errorSignature = instance.error;
@@ -478,6 +530,9 @@ export function syncPanel(context) {
  */
 export async function fullRebuild(context) {
     const { instance, originals, state } = context;
+    // The stock renderer rebuilds every row, so only the scroll offset is worth
+    // carrying across: an empty list collapses the scroller to its top.
+    const scrollTop = getScrollTop(instance.containerElement);
     state.listElement = null;
     state.nodeByKey = new Map();
     state.previousByKey = new Map();
@@ -487,4 +542,7 @@ export async function fullRebuild(context) {
     await originals.renderPromptManager.call(instance);
     await originals.renderPromptManagerListItems.call(instance);
     instance.makeDraggable();
+    if (scrollTop !== null) {
+        setScrollTop(instance.containerElement, scrollTop);
+    }
 }

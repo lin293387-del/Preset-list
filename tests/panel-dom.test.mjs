@@ -341,6 +341,92 @@ describe('panel DOM integration', { skip: Window ? false : 'happy-dom is not ins
         assert.equal(list.querySelector('li[data-pm-identifier="jailbreak"]'), null);
     });
 
+    /**
+     * Emulates how a browser clamps a scroll offset when the scrolled content
+     * shrinks: the prompt list is treated as the only content of the scroller, so
+     * an empty list means the offset falls back to the top.
+     *
+     * @returns {{ reads: number[], scroller: any }}
+     */
+    function installClampingScroller() {
+        const scroller = document.querySelector('.scrollableInner');
+        const state = { value: 240, reads: [] };
+        const hasRows = () => Boolean(document.querySelector(`#${PREFIX}prompt_manager_list li[data-pm-identifier]`));
+        Object.defineProperty(scroller, 'scrollTop', {
+            configurable: true,
+            get() {
+                state.reads.push(state.value);
+                return hasRows() ? state.value : 0;
+            },
+            set(value) {
+                state.value = hasRows() ? Number(value) || 0 : 0;
+            },
+        });
+        return { state, scroller };
+    }
+
+    test('a structural rebuild never empties the list while it renders', async () => {
+        const prompts = defaultPrompts();
+        const enabled = new Map(prompts.map(p => [p.identifier, true]));
+        const harness = createFixture({ prompts, enabledMap: enabled, counts: { main: 12, chatHistory: 345, worldInfoBefore: 7 } });
+
+        await syncPanel(harness.context);
+
+        // Regression: the rebuild used to drop every row until the new ones were
+        // built, which collapsed the scroll container and snapped the panel to the
+        // top (deleting or duplicating a prompt scrolled the list away).
+        const originals = harness.context.originals.renderPromptManagerListItems;
+        /** @type {number[]} */
+        const rowsDuringRender = [];
+        harness.context.originals.renderPromptManagerListItems = async function probe() {
+            rowsDuringRender.push(document.querySelectorAll(`#${PREFIX}prompt_manager_list li[data-pm-identifier]`).length);
+            return originals.call(this);
+        };
+
+        // A prompt rename changes the structure signature, which forces a rebuild.
+        prompts[0].name = 'Main Prompt (renamed)';
+        await syncPanel(harness.context);
+
+        assert.deepEqual(rowsDuringRender, [3], 'the previous rows stay in the list while the new markup is built');
+    });
+
+    test('a structural rebuild keeps the scroll offset and the row nodes', async () => {
+        const prompts = defaultPrompts();
+        const enabled = new Map(prompts.map(p => [p.identifier, true]));
+        const harness = createFixture({ prompts, enabledMap: enabled, counts: { main: 12, chatHistory: 345, worldInfoBefore: 7 } });
+
+        await syncPanel(harness.context);
+        const { state: scroller } = installClampingScroller();
+        const list = harness.context.instance.containerElement.querySelector(`#${PREFIX}prompt_manager_list`);
+        const nodes = new Map(Array.from(list.querySelectorAll('li[data-pm-identifier]'))
+            .map(node => [node.getAttribute('data-pm-identifier'), node]));
+
+        prompts[0].name = 'Main Prompt (renamed)';
+        await syncPanel(harness.context);
+
+        const rebuiltList = harness.context.instance.containerElement.querySelector(`#${PREFIX}prompt_manager_list`);
+        assert.equal(scroller.value, 240, 'the scroll offset must survive the rebuild');
+        nodes.forEach((node, key) => {
+            assert.equal(rebuiltList.querySelector(`li[data-pm-identifier="${key}"]`), node, `${key} node must be reused`);
+        });
+    });
+
+    test('a changed row is replaced without losing the scroll offset', async () => {
+        const prompts = defaultPrompts();
+        const enabled = new Map(prompts.map(p => [p.identifier, true]));
+        const harness = createFixture({ prompts, enabledMap: enabled, counts: { main: 12, chatHistory: 345, worldInfoBefore: 7 } });
+
+        await syncPanel(harness.context);
+        const { state: scroller } = installClampingScroller();
+
+        // Toggling changes one row's structure, which must not disturb the rest.
+        harness.context.instance.serviceSettings.prompt_order[0].order[0].enabled = false;
+        await syncPanel(harness.context);
+
+        assert.equal(scroller.value, 240);
+        assert.equal(harness.context.state.lastStats.updated, 1);
+    });
+
     test('reordering prompts follows the model order without rebuilding rows', async () => {
         const prompts = defaultPrompts();
         const enabled = new Map(prompts.map(p => [p.identifier, true]));
