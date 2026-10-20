@@ -1,0 +1,41 @@
+/*
+ * Bench scaffolding only — layout the app provides elsewhere (a window with a
+ * fixed top bar over a scrolling chat). None of these rules is what the bench
+ * measures; everything it measures comes from TT's own /tt-style.css.
+ */
+
+html,
+body {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+}
+
+/*
+ * The busy backdrop real TT paints behind its blurred chrome. High-frequency on
+ * purpose: a flat colour would let the compositor skip work that a theme
+ * background image would force it to do.
+ */
+body {
+    background-image:
+        repeating-conic-gradient(from 0deg at 50% 50%,
+            #223347 0deg 12deg, #46586d 12deg 24deg, #101820 24deg 36deg),
+        repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.14) 0 3px, rgba(0, 0, 0, 0.18) 3px 6px);
+    background-size: 420px 420px, 64px 64px;
+}
+
+#top-bar {
+    position: fixed;
+    inset: 0 0 auto 0;
+    height: 56px;
+}
+
+#chat {
+    position: fixed;
+    inset: 56px 0 0 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    /* Keep the bench honest across engines: no smooth scrolling, no snapping. */
+    scroll-behavior: auto;
+    overscroll-behavior: contain;
+}

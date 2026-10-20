@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tavern Optimize paint bench</title>
+<!--
+  The real TauriTavern stylesheet, served live from the TT source tree by
+  `run.mjs` (see TT_SRC there). Nothing is vendored, so the bench cannot drift
+  away from the app it is supposed to describe.
+-->
+<link rel="stylesheet" href="/tt-style.css">
+<link rel="stylesheet" href="/theme.css">
+<link rel="stylesheet" href="/bench.css">
+</head>
+<body>
+<!--
+  Real TT ids and class names so TT's own rules apply to them:
+
+  - `#top-bar`  : fixed chrome with `backdrop-filter: blur(--SmartThemeBlurStrength)`
+                  (TT src/style.css:824)
+  - `#chat`     : scrolling surface that also carries a blur plus a
+                  `text-shadow` on every glyph (TT src/style.css:929, 932)
+  - `.mes`      : one message per row, avatar image with `box-shadow`
+
+  The numbers this page produces are therefore TT's paint cost, measured on TT's
+  own declarations.
+-->
+<div id="top-bar">
+    <div id="top-bar-left">
+        <div id="logo">Tavern</div>
+    </div>
+    <div id="top-bar-center">
+        <div id="char_name">Paint bench</div>
+    </div>
+    <div id="top-bar-right">
+        <div class="drawer-icon fa-solid fa-bars"></div>
+        <div class="drawer-icon fa-solid fa-sliders"></div>
+    </div>
+</div>
+<div id="chat" tabindex="0"></div>
+<script src="/bench.js"></script>
+</body>
+</html>

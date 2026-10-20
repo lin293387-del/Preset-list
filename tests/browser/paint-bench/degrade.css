@@ -1,0 +1,28 @@
+/*
+ * The simulated A1 layer: exactly what Tavern Optimize's mobile paint-degradation
+ * pass is meant to do to TT's chrome, written against the selectors that carry
+ * the cost today (see the provenance table in page.html).
+ *
+ * It exists so the bench can prove it is able to tell the two worlds apart. A
+ * bench that reports the same number either way measures nothing.
+ */
+#top-bar,
+#chat,
+#send_form,
+.popup .popper-modal,
+#shadow_popup,
+#shadow_character_popup,
+#character_popup {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+}
+
+/* TT puts a blurred halo behind every glyph in the chat (style.css:932). */
+#chat {
+    text-shadow: none !important;
+}
+
+.avatar img,
+.mes .avatar img {
+    box-shadow: none !important;
+}
