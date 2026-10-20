@@ -333,9 +333,22 @@ function installRowDelegation(instance, state) {
 function takeLiveRows(state) {
     const list = state.listElement;
     const rows = list ? Array.from(list.children).filter(node => node.getAttribute('data-pm-identifier')) : [];
+    const indexedNodes = state.nodeByKey;
+    const indexedMeta = state.previousByKey;
     state.nodeByKey = new Map();
     state.previousByKey = new Map();
     for (const node of rows) {
+        const key = node.getAttribute('data-pm-identifier');
+        // A row this extension indexed last sync, still the same node: its markup
+        // is whatever it was rendered from, so the fingerprint is already known.
+        // Re-deriving it means serialising and re-parsing every row — 200 of them
+        // on a long list — to arrive at the answer that is already in hand.
+        const known = indexedNodes.get(key);
+        if (known === node && indexedMeta.has(key)) {
+            state.nodeByKey.set(key, node);
+            state.previousByKey.set(key, indexedMeta.get(key));
+            continue;
+        }
         try {
             const meta = extractRowMeta(node.outerHTML);
             state.previousByKey.set(meta.key, meta);
