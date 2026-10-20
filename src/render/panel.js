@@ -49,23 +49,47 @@ export function createPanelState() {
 }
 
 /**
- * @param {HTMLElement} element
- * @returns {number | null}
+ * Finds the element that actually scrolls the prompt panel.
+ *
+ * Upstream reads and restores the offset through `.scrollableInner` as well, so
+ * the same ancestor is used here.
+ *
+ * @param {HTMLElement | null | undefined} element
+ * @returns {HTMLElement | null}
  */
-function getScrollTop(element) {
-    const scroller = element.closest('.scrollableInner') ?? element.parentElement?.closest?.('.scrollableInner') ?? null;
-    return scroller ? scroller.scrollTop : null;
+function findScroller(element) {
+    if (!(element instanceof HTMLElement)) {
+        return null;
+    }
+    return element.closest('.scrollableInner') ?? element.parentElement?.closest?.('.scrollableInner') ?? null;
 }
 
 /**
- * @param {HTMLElement} element
- * @param {number} value
+ * Keeps the panel's scroll offset across one DOM update.
+ *
+ * The browser clamps `scrollTop` whenever the scrolled content shrinks — an
+ * emptied list collapses the container and the offset is rewritten to 0. Upstream
+ * restores its own offset around *its* render, but this extension's render is
+ * asynchronous and runs after that restore, so anything the sync collapses would
+ * stay collapsed: the panel jumped back to the top of the prompt list after a
+ * delete or a duplicate.
+ *
+ * @param {HTMLElement | null | undefined} element
+ * @returns {{ end: () => void }}
  */
-function setScrollTop(element, value) {
-    const scroller = element.closest('.scrollableInner') ?? null;
-    if (scroller) {
-        scroller.scrollTop = value;
+function preserveScroll(element) {
+    const scroller = findScroller(element);
+    if (!scroller) {
+        return { end() {} };
     }
+    const top = scroller.scrollTop;
+    return {
+        end() {
+            if (scroller.scrollTop !== top) {
+                scroller.scrollTop = top;
+            }
+        },
+    };
 }
 
 /**
@@ -210,7 +234,62 @@ function installRowDelegation(instance, state) {
 }
 
 /**
+ * Adopts the rows rendered before a structural rebuild.
+ *
+ * They are moved into the new list instead of being discarded with the old
+ * structure, so the scroll container never loses its height, and they are
+ * re-indexed from their own markup so the diff below can tell a row that only
+ * changed its token number from one that really has to be rebuilt.
+ *
+ * @param {object} state
+ * @returns {Element[]}
+ */
+function takeLiveRows(state) {
+    const list = state.listElement;
+    const rows = list ? Array.from(list.children).filter(node => node.getAttribute('data-pm-identifier')) : [];
+    state.nodeByKey = new Map();
+    state.previousByKey = new Map();
+    for (const node of rows) {
+        try {
+            const meta = extractRowMeta(node.outerHTML);
+            state.previousByKey.set(meta.key, meta);
+            state.nodeByKey.set(meta.key, node);
+        } catch {
+            // A row whose markup cannot be parsed is not indexed, so the next
+            // sync replaces it instead of trusting a stale node.
+        }
+    }
+    return rows;
+}
+
+/**
+ * Puts previously rendered rows back into a freshly built list.
+ *
+ * This is what keeps the panel from scrolling to the top: an emptied list
+ * collapses the scroll container, the browser clamps `scrollTop` to 0 while the
+ * list is empty, and the offset cannot be restored afterwards. The rows stay
+ * until their replacements are ready, so the container never loses its height.
+ *
+ * @param {Element | null} listElement
+ * @param {Element[]} rows
+ */
+function appendRows(listElement, rows) {
+    if (!listElement || rows.length === 0) {
+        return;
+    }
+    const fragment = document.createDocumentFragment();
+    for (const row of rows) {
+        fragment.appendChild(row);
+    }
+    listElement.appendChild(fragment);
+}
+
+/**
  * Rebuilds container/header/footer from upstream markup and adopts it.
+ *
+ * The rows rendered before the rebuild are moved into the new list instead of
+ * being discarded with the old structure, so the scroll position survives the
+ * empty window and the row diff below can reuse their nodes.
  *
  * @param {object} context
  * @returns {Promise<void>}
@@ -227,14 +306,13 @@ async function rebuildStructure(context) {
         restore();
     }
 
-    const scrollTop = getScrollTop(container);
+    const liveRows = takeLiveRows(state);
     container.replaceChildren(...Array.from(scratch.childNodes));
 
-    state.nodeByKey = new Map();
-    state.previousByKey = new Map();
     state.placeholderApplied = false;
 
     captureStructureRefs(instance, state, diagnostics);
+    appendRows(state.listElement, liveRows);
 
     instance.listElement = state.listElement;
     try {
@@ -243,10 +321,6 @@ async function rebuildStructure(context) {
         diagnostics.warn('Prompt reorder could not be initialized by the plugin:', error);
     }
     installRowDelegation(instance, state);
-
-    if (scrollTop !== null) {
-        setScrollTop(container, scrollTop);
-    }
 
     state.structureSignature = structureSignature(instance);
     state.errorSignature = instance.error;
@@ -429,13 +503,21 @@ async function syncPanelNow(context) {
         || state.errorSignature !== instance.error
         || state.structureSignature !== structureSignature(instance);
 
-    if (needsStructure) {
-        await rebuildStructure(context);
-    }
+    const scroll = preserveScroll(container);
+    try {
+        if (needsStructure) {
+            await rebuildStructure(context);
+        }
 
-    await syncRows(context);
-    updateTotal(context);
-    applyStalePresentation(context);
+        await syncRows(context);
+        updateTotal(context);
+        applyStalePresentation(context);
+    } finally {
+        // The sync may have emptied the list while it built the new markup, which
+        // makes the browser clamp the offset to the top. Restore it here instead of
+        // letting the panel jump away from the row the user just touched.
+        scroll.end();
+    }
 }
 
 /**
@@ -478,13 +560,20 @@ export function syncPanel(context) {
  */
 export async function fullRebuild(context) {
     const { instance, originals, state } = context;
+    // The stock renderer rebuilds every row, so only the scroll offset is worth
+    // carrying across: an emptied list collapses the scroller to its top.
+    const scroll = preserveScroll(instance.containerElement);
     state.listElement = null;
     state.nodeByKey = new Map();
     state.previousByKey = new Map();
     state.structureSignature = null;
     state.errorSignature = undefined;
     state.placeholderApplied = false;
-    await originals.renderPromptManager.call(instance);
-    await originals.renderPromptManagerListItems.call(instance);
-    instance.makeDraggable();
+    try {
+        await originals.renderPromptManager.call(instance);
+        await originals.renderPromptManagerListItems.call(instance);
+        instance.makeDraggable();
+    } finally {
+        scroll.end();
+    }
 }
