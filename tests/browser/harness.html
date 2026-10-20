@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Preset Lite panel harness</title>
+<style>
+    :root { color-scheme: dark; }
+    html, body { margin: 0; height: 100%; background: #12161d; color: #d8dee9; font: 13px/1.4 system-ui, sans-serif; }
+    /*
+     * The panel background and the row background are deliberately different
+     * colours: the pixel probe tells "a row was painted here" from "this is empty
+     * panel", and identical colours would make that impossible to measure.
+     */
+    #left-nav-panel { position: fixed; inset: 0 auto 0 0; width: 420px; background: #0e1116; overflow: hidden; }
+    .scrollableInner { height: 100%; overflow-y: auto; overflow-x: hidden; }
+    #completion_prompt_manager { padding: 0 8px; }
+    #completion_prompt_manager_list { list-style: none; margin: 0; padding: 0; }
+    .completion_prompt_manager_prompt {
+        display: grid;
+        grid-template-columns: 28px 4fr 80px 45px;
+        align-items: center;
+        padding: 8px;
+        border: 1px solid #2c3440;
+        margin-bottom: 2px;
+        background: #1b212b;  /* row fill, distinct from the panel fill above */
+    }
+    .completion_prompt_manager_prompt_disabled { opacity: 0.5; }
+    .prompt_manager_prompt_controls { display: flex; gap: 4px; justify-content: flex-end; }
+    .prompt_manager_prompt_tokens { text-align: right; }
+    .completion_prompt_manager_list_head { display: grid; grid-template-columns: 28px 4fr 80px 45px; padding: 8px; color: #7b8794; }
+    .completion_prompt_manager_footer { display: flex; gap: 6px; padding: 8px; }
+    .completion_prompt_manager_footer select { flex: 1; }
+    .completion_prompt_manager_header { display: flex; justify-content: space-between; padding: 8px; }
+
+    /*
+     * The three content-visibility policies under test.
+     *
+     * `old` is what shipped before (fixed 1.9rem placeholder), `new` is what
+     * style.css does now (placeholder published from the measured row), `off` is
+     * no skipping at all. `new` reads the same custom property the renderer
+     * publishes, so this reproduces the shipped rule instead of a paraphrase.
+     */
+    .cv-old #completion_prompt_manager_list > li.completion_prompt_manager_prompt {
+        content-visibility: auto;
+        contain-intrinsic-block-size: auto 1.9rem;
+    }
+    .cv-new #completion_prompt_manager_list > li.completion_prompt_manager_prompt {
+        content-visibility: auto;
+        contain-intrinsic-block-size: auto var(--tt-pl-row-height, 2.25rem);
+    }
+    .cv-off #completion_prompt_manager_list > li.completion_prompt_manager_prompt {
+        content-visibility: visible;
+    }
+</style>
+</head>
+<body class="cv-off">
+<div id="left-nav-panel" class="drawer-content openDrawer">
+    <div class="scrollableInner">
+        <div id="completion_prompt_manager"></div>
+    </div>
+</div>
+<script type="module" src="./harness.js"></script>
+</body>
+</html>

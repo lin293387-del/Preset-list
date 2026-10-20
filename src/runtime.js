@@ -11,6 +11,7 @@ import { PromptManager } from '/scripts/PromptManager.js';
 import { promptManager as livePromptManager } from '/scripts/openai.js';
 import { getTokenizerModel } from '/scripts/tokenizers.js';
 
+import { createGestureGate } from './gesture.js';
 import { getContext } from './host.js';
 import { createPresetWindowCoalescer } from './patches/preset-window.js';
 import { createPromptManagerPatch } from './patches/prompt-manager.js';
@@ -20,6 +21,13 @@ import { createTokenCountCache } from './tokens/cache.js';
 import { createBrowserScheduler, createRecountScheduler } from './tokens/scheduler.js';
 import { VERSION } from './version.js';
 
+/**
+ * How long after the last scroll event the list counts as still moving.
+ *
+ * Only used to hold the recount and to keep the scroll presentation class on; the
+ * scroll-end wake-up itself is event driven, so a gesture never waits for a
+ * polling tick to be recognised as finished.
+ */
 const SCROLL_HOLD_MS = 160;
 /**
  * A preset switch is something the user waits for, so its recount may not sit
@@ -131,8 +139,31 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
         };
     }
 
+    /**
+     * Panel writes are held back for the whole duration of a scroll or a drag.
+     *
+     * This is the one place that decides *when* the panel may be touched; the
+     * renderer decides *what* to touch. Keeping the two apart is what makes the
+     * promise "no repaint during a fling" checkable: nothing else in this module
+     * calls the renderer directly.
+     */
+    const panelGate = createGestureGate({
+        isHeld: () => isGestureHeld(),
+        diagnostics,
+    });
+
     function requestPanelSync(reason) {
-        if (!settings.get().enabled || syncRequested) {
+        if (!settings.get().enabled) {
+            return;
+        }
+        panelGate.run(reason, runPanelSync);
+    }
+
+    /**
+     * @param {string} reason
+     */
+    function runPanelSync(reason) {
+        if (syncRequested) {
             return;
         }
         syncRequested = true;
@@ -209,14 +240,35 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
         return observedVisible;
     }
 
-    function isInteractionHeld() {
-        if (!settings.get().deferDuringScroll) {
-            return false;
-        }
+    /**
+     * True while the user is actively moving the panel: a scroll, a fling or a
+     * row drag. During that time nothing may write to the panel DOM.
+     *
+     * `deferDuringScroll` still exists as a switch, but it now controls the
+     * recount hold only — a gesture always gates panel writes, because a repaint
+     * under the finger is visible even when the numbers are already correct.
+     *
+     * @returns {boolean}
+     */
+    function isGestureHeld() {
         if (sorting || document.querySelector('.ui-sortable-helper')) {
             return true;
         }
         return Date.now() < scrollingUntil;
+    }
+
+    /**
+     * The recount may additionally be held back while scrolling, which is what
+     * `deferDuringScroll` is for: a recount that starts mid-gesture costs CPU the
+     * gesture needs.
+     *
+     * @returns {boolean}
+     */
+    function isInteractionHeld() {
+        if (!settings.get().deferDuringScroll) {
+            return false;
+        }
+        return isGestureHeld();
     }
 
     /**
@@ -251,8 +303,15 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
             scrollHoldTimer = setTimeout(() => {
                 scrollHoldTimer = null;
                 scrollingUntil = 0;
+                // The gesture is over: this is the first moment the panel may be
+                // touched again, and the waiting work is what the user waits for.
+                panelGate.flush('scroll-end');
                 scheduler.wake('scroll-end');
             }, SCROLL_HOLD_MS);
+            // A scroll is a gesture, not an edit: it must not postpone a recount
+            // that is already due, otherwise a long fling keeps the numbers stale
+            // for as long as the finger moves.
+            return;
         }
         scheduler.noteInteraction(type);
     }
@@ -266,6 +325,7 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
         if (next) {
             scheduler.noteInteraction('drag');
         } else {
+            panelGate.flush('drag-end');
             scheduler.wake('drag-end');
         }
     }
@@ -505,6 +565,7 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
             clearTimeout(scrollHoldTimer);
             scrollHoldTimer = null;
         }
+        panelGate.clear();
         if (settingsSyncTimer !== null) {
             clearTimeout(settingsSyncTimer);
             settingsSyncTimer = null;
@@ -585,6 +646,7 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
         setEnabled(enabled) {
             settings.update({ enabled: Boolean(enabled) });
         },
+        panelGate,
         snapshot() {
             return {
                 version: VERSION,

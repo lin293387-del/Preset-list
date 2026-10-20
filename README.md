@@ -16,16 +16,48 @@ a reload.
 
 | Panel interaction | Upstream | With Preset Lite |
 | --- | --- | --- |
-| Toggle / edit / delete / add a prompt | `#completion_prompt_manager` is cleared and fully rebuilt, ~4 listeners re-attached per row, scroll restored | only the affected row is replaced; unchanged rows keep their DOM nodes |
-| Token numbers | rebuilt list waits for a full dry run of the whole generation pipeline | interaction paints immediately, the dry run is coalesced and runs once while the browser is idle, numbers are then written in place |
+| Toggle / edit / delete / add a prompt | `#completion_prompt_manager` is cleared and fully rebuilt, ~4 listeners re-attached per row | only the affected row is re-rendered (upstream still builds its markup, pointed at that one prompt) |
+| Token numbers | rebuilt list waits for a full dry run of the whole generation pipeline | interaction paints immediately, the dry run is coalesced and runs once while the browser is idle, then the numbers are written **into the existing cells** — no markup is built at all |
+| Editing a prompt body | whole panel rebuilt | nothing is rendered: the body is not part of the row markup, only the next recount moves the number |
+| Scrolling / flinging | rebuilt rows, layout, and repaint under the finger | **no DOM write at all while a gesture is in progress**; pending work is applied once when it ends |
 | Switching a preset | ~100 form writes each fire their own `input` handlers, then the panel rebuilds twice | the panel reacts once; the preset `input` events are replayed once at the end of the apply window, and fields the preset did not move are skipped |
-| Long lists | every row is laid out and painted on every interaction | rows scrolled out of view are skipped by the renderer (`content-visibility`), measurements are forced back on during drag & drop |
+| Long lists | every row is laid out and painted on every interaction | rows scrolled out of view are skipped (`content-visibility`), with the reserved height measured from a real row instead of guessed |
 
 **It does not** touch: text-completion/Kobold/NovelAI preset panels, the World Info or Advanced
 Formatting drawers, the preset JSON format, or the tokenizer itself. Token counting keeps using the
 same host endpoint it always did — only *when* and *how often* it runs changes.
 
----
+### The three render paths
+
+Every sync picks the cheapest path that can still be correct, and says which one it took (one console
+line per path, once per session, so the host's log viewer shows whether the fast paths are live):
+
+| Path | When | What it costs |
+| --- | --- | --- |
+| `tokens` | nothing but the numbers moved (a recount finished, or a prompt body was edited) | one text node per changed cell; upstream is not called |
+| `local` | one or a few rows changed (toggle, rename, reorder of a single entry) | upstream renders *those* rows only |
+| `full` | the row set moved (add, delete, duplicate, character change, error change) | upstream renders the whole list, reconciled by `data-pm-identifier` |
+
+Measured in Chromium at 200 prompts (`npm run test:browser`): `tokens` 5 ms, `local` 8 ms, `full`
+~100 ms per sync — against ~350 ms for a full upstream rebuild of the same list. Editing a prompt
+body and a finished recount both stay on `tokens`, which is what makes typing in the editor and
+watching the numbers settle feel free.
+
+### Nothing repaints during a gesture
+
+This is a hard rule, not a best effort. While the panel is being scrolled, flung or dragged, the
+renderer is not called at all: the request is remembered and applied once when the gesture ends
+(`src/gesture.js`). Two consequences worth knowing:
+
+- token numbers can be one gesture behind. While a recount is pending they are shown dimmed, so the
+  panel never claims to be current when it is not.
+- a structural change requested mid-gesture (a helper script deleting a row) is applied when the
+  gesture ends, so the list never empties under the finger and the scroll offset never jumps.
+
+The scroll range is also kept honest: the height reserved for a not-yet-painted row is published from
+a real row (`--tt-pl-row-height`, kept up to date by a `ResizeObserver`), so flinging cannot make the
+scrollbar or the range drift. The browser test measures that drift at 0 px; with a fixed placeholder
+it was 1552 px at 200 rows, which is exactly the "blank flash then jump" users report.
 
 ## Requirements
 
@@ -140,10 +172,21 @@ keep showing `-`.
 ## Development
 
 ```
-npm install          # devDependencies: typescript, happy-dom
-npm test             # 94 tests: pure logic, panel DOM reconciliation, patch layer, runtime smoke
+npm install          # devDependencies: typescript, happy-dom, ws
+npm test             # 99 tests: pure logic, panel DOM reconciliation, patch layer, runtime smoke
 npm run typecheck    # tsc --noEmit with checkJs (JSDoc types, no build step)
+npm run test:browser # real Chromium: render paths, fling, blank frames, structural churn
+npm run test:browser:quick   # same, fewer rows and repetitions
 ```
+
+`test:browser` starts a local static server and a headless Chromium over the DevTools protocol (no
+Playwright/Puppeteer), then drives the real `src/render/panel.js` and `src/gesture.js` in a page that
+reproduces the upstream markup and its per-row listener cost. It reports, per scenario, the median and
+p95 sync time, the render path taken, and — for a fast fling — the scroll-range drift, backwards jumps
+and the share of the viewport that still shows painted content (measured from actual pixels, with a
+forced-blank control so the probe cannot silently pass). It fails the run when a fast path stops being
+taken, when any DOM write reaches the panel during a gesture, or when a structural change leaves the
+list empty for a single frame.
 
 The test suite is layered: pure functions (diff planning, scheduler state machine, cache, preset
 window) run without a DOM; the reconciliation layer runs against happy-dom with faithful copies of
@@ -164,12 +207,14 @@ src/runtime.js          composition: patches, scheduling, events, global API
 src/patches/*.js        runtime takeover of PromptManager and of the preset window
 src/render/plan.js      pure row parsing + diff planning (unit tested)
 src/render/apply.js     DOM executor for a plan
-src/render/panel.js     structure/rows/total/stale-marker rendering
+src/gesture.js          holds panel writes back for the duration of a scroll/drag
+src/render/panel.js     structure/rows/total/stale-marker rendering, path selection
 src/tokens/scheduler.js recount state machine (unit tested)
 src/tokens/cache.js     memoized token counts, persistent LRU (unit tested)
 src/perf/metrics.js     timing spans for panel syncs and recounts
 src/ui/settings-panel.js settings drawer wiring and status line
 tests/                  unit, DOM reconciliation, patch-layer and runtime smoke tests
+tests/browser/          headless-Chromium harness, driver and measurements
 tests/fixtures/         upstream markup copies, module doubles, Node resolve hook
 ```
 

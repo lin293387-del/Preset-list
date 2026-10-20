@@ -34,6 +34,20 @@ export function createDiagnostics() {
         info(message) {
             push('info', message);
         },
+        /**
+         * Writes one console line the first time a key is announced.
+         *
+         * Used for facts that must be visible in the host's log viewer but would
+         * be noise if repeated (which render path is in use, for example).
+         */
+        announce(key, message) {
+            if (onceKeys.has(`announce:${key}`)) {
+                return;
+            }
+            onceKeys.set(`announce:${key}`, 1);
+            console.log(`${prefix} ${message}`);
+            push('info', message);
+        },
         warn(message, ...args) {
             console.warn(`${prefix} ${message}`, ...args);
             push('warn', message);
