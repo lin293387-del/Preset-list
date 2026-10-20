@@ -26,7 +26,7 @@
  */
 
 import { RowParseError, extractRowMeta, planRowOps } from './plan.js';
-import { applyLocalRows, applyRowPlan, syncHeadNodes, updateTokenNumbers } from './apply.js';
+import { applyLocalRows, applyRowPlan, createNodeFromHtml, syncHeadNodes, updateTokenNumbers } from './apply.js';
 
 /** Consecutive unexpected render failures before the extension steps aside. */
 const MAX_SYNC_FAILURES = 3;
@@ -933,6 +933,186 @@ function announcePath(context) {
 }
 
 /**
+ * Recognises the one structural change that does not need every row rebuilt:
+ * prompts were added and/or removed while every surviving row still carries its
+ * old fingerprint.
+ *
+ * Upstream charges a whole-list row build for an add or a delete. The list only
+ * has to gain the new rows (upstream still builds the markup, pointed at just
+ * those prompts) and drop the departed ones. Anything this reasoning does not
+ * cover — a different fingerprint, a moved budget, an unknown prompt shape —
+ * returns null, which sends the sync back to the paths that handle everything.
+ *
+ * @param {object} context
+ * @param {string[]} modelKeys
+ * @returns {{ added: string[], removed: string[], reorder: boolean } | null}
+ */
+function planStructuralDelta(context, modelKeys) {
+    const { instance, state } = context;
+    const known = state.nodeByKey;
+    if (known.size === 0) {
+        return null;
+    }
+
+    const modelSet = new Set(modelKeys);
+    const added = modelKeys.filter(key => !known.has(key));
+    /** @type {string[]} */
+    const removed = [];
+    for (const key of known.keys()) {
+        if (!modelSet.has(key)) {
+            removed.push(key);
+        }
+    }
+    // A pure reorder is structural too, and it needs no markup at all: the nodes
+    // are already on screen, they are just in the old order.
+    const survivingModelOrder = modelKeys.filter(key => known.has(key));
+    /** @type {string[]} */
+    const domOrder = [];
+    for (const node of rowNodes(state.listElement)) {
+        const key = node.getAttribute('data-pm-identifier');
+        if (key !== null && known.has(key) && modelSet.has(key)) {
+            domOrder.push(key);
+        }
+    }
+    const reorder = survivingModelOrder.length === domOrder.length
+        && survivingModelOrder.some((key, index) => key !== domOrder[index]);
+
+    if (added.length === 0 && removed.length === 0 && !reorder) {
+        return null;
+    }
+
+    const globals = rowGlobals(instance);
+    if (globals !== state.rowGlobals) {
+        // Token usage, the budget, the override lists or the character moved:
+        // the rows that survived may look different too, so this is not a delta.
+        return null;
+    }
+
+    for (const key of modelKeys) {
+        if (!known.has(key)) {
+            continue;
+        }
+        const prompt = instance.getPromptById?.(key);
+        const signature = rowSignature(instance, prompt, globals);
+        const stored = state.rowSignatures.get(key);
+        if (signature === null || stored === undefined) {
+            return null;
+        }
+        if (stored !== `${signature}\u0003${promptShape(prompt)}`) {
+            return null;
+        }
+    }
+
+    return { added, removed, reorder };
+}
+
+/**
+ * Applies a structural delta in place.
+ *
+ * Removals run first so the insertion point of an added row can be found among
+ * the rows that actually survived.
+ *
+ * @param {object} context
+ * @param {{ added: string[], removed: string[], reorder: boolean }} delta
+ * @param {string[]} modelKeys
+ * @returns {Promise<void>}
+ */
+async function syncStructuralDelta(context, delta, modelKeys) {
+    const { state } = context;
+    const list = state.listElement;
+
+    for (const key of delta.removed) {
+        const node = state.nodeByKey.get(key);
+        node?.remove();
+        state.nodeByKey.delete(key);
+        state.previousByKey.delete(key);
+        state.rowSignatures.delete(key);
+    }
+
+    if (delta.added.length > 0) {
+        const { headNodes, nextRows } = await buildRows(context, delta.added);
+        const built = nextRows.map(row => row.key);
+        const missing = delta.added.filter(key => !built.includes(key));
+        if (missing.length > 0) {
+            throw new RowParseError(`Upstream did not render the requested row(s): ${missing.join(', ')}`);
+        }
+        syncHeadNodes(list, headNodes);
+
+        for (const row of nextRows) {
+            const node = createNodeFromHtml(row.html);
+            const following = nextKnownRowNode(state, modelKeys, row.key);
+            if (following) {
+                following.before(node);
+            } else {
+                list.append(node);
+            }
+            state.nodeByKey.set(row.key, node);
+            state.previousByKey.set(row.key, row);
+        }
+    }
+
+    const moved = delta.reorder ? reorderRows(state, modelKeys) : 0;
+
+    state.lastStats = {
+        created: delta.added.length,
+        updated: 0,
+        tokens: 0,
+        removed: delta.removed.length,
+        moved,
+        rebuilt: 0,
+        replaced: 0,
+    };
+    state.lastPath = 'local';
+}
+
+/**
+ * Puts the existing row nodes into model order, moving only the ones that are
+ * out of place. Walks backwards so every node is inserted in front of a
+ * reference that is already where it belongs.
+ *
+ * @param {object} state
+ * @param {string[]} modelKeys
+ * @returns {number} How many nodes had to be moved.
+ */
+function reorderRows(state, modelKeys) {
+    const list = state.listElement;
+    let moves = 0;
+    /** @type {Element | null} */
+    let following = null;
+
+    for (let index = modelKeys.length - 1; index >= 0; index -= 1) {
+        const node = state.nodeByKey.get(modelKeys[index]);
+        if (!node) {
+            continue;
+        }
+        if (following !== null && node.nextElementSibling !== following) {
+            list.insertBefore(node, following);
+            moves += 1;
+        }
+        following = node;
+    }
+
+    return moves;
+}
+
+/**
+ * @param {object} state
+ * @param {string[]} modelKeys
+ * @param {string} key The row that was just inserted.
+ * @returns {Element | null} The next row that is already on screen, if any.
+ */
+function nextKnownRowNode(state, modelKeys, key) {
+    const position = modelKeys.indexOf(key);
+    for (let index = position + 1; index < modelKeys.length; index += 1) {
+        const node = state.nodeByKey.get(modelKeys[index]);
+        if (node) {
+            return node;
+        }
+    }
+    return null;
+}
+
+/**
  * @param {object} context
  * @returns {Promise<void>}
  */
@@ -960,16 +1140,25 @@ async function syncPanelNow(context) {
 
         const modelKeys = promptModelKeys(instance);
         const live = rowNodes(state.listElement);
-        const liveKeys = live.map(node => node.getAttribute('data-pm-identifier'));
-        const rowsIntact = liveKeys.length === modelKeys.length
-            && liveKeys.every((key, index) => key === modelKeys[index])
+        // The list is ours as long as it still holds exactly the nodes this
+        // extension put there. Someone else's node means the keyed plan is built
+        // on sand and the answer is a full rebuild — but a row set that merely
+        // changed in the *model* is not that case: an added or removed prompt is
+        // reconciled as a delta below.
+        const rowsIntact = live.length === state.nodeByKey.size
             && live.every(node => state.nodeByKey.get(node.getAttribute('data-pm-identifier')) === node);
 
-        const decision = rowsIntact
-            ? choosePath(context, modelKeys)
-            : { path: /** @type {'full'} */ ('full'), keys: modelKeys };
+        const delta = rowsIntact ? planStructuralDelta(context, modelKeys) : null;
 
-        if (decision.path === 'chrome') {
+        const decision = delta
+            ? { path: /** @type {'local'} */ ('local'), keys: delta.added }
+            : rowsIntact
+                ? choosePath(context, modelKeys)
+                : { path: /** @type {'full'} */ ('full'), keys: modelKeys };
+
+        if (delta) {
+            await syncStructuralDelta(context, delta, modelKeys);
+        } else if (decision.path === 'chrome') {
             // No row can look different, so only the numbers have to be written.
             syncTokensOnly(context);
         } else {
