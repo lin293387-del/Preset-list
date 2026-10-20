@@ -30,8 +30,6 @@ import { applyLocalRows, applyRowPlan, syncHeadNodes, updateTokenNumbers } from 
 
 /** Consecutive unexpected render failures before the extension steps aside. */
 const MAX_SYNC_FAILURES = 3;
-/** `previousByKey` is keyed per character; the active character is part of the key. */
-const CHARACTER_KEY = '\u0003';
 
 /**
  * @returns {object} Fresh per-instance render state.
@@ -607,7 +605,7 @@ async function buildRows(context, onlyKeys = null) {
     const previousList = instance.listElement;
     const originalSelector = instance.getPromptsForCharacter;
     const scoped = Array.isArray(onlyKeys) && onlyKeys.length > 0;
-    const wanted = scoped ? new Set(onlyKeys) : null;
+    const wanted = new Set(onlyKeys ?? []);
 
     instance.listElement = scratchList;
     if (scoped) {

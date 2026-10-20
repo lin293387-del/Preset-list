@@ -185,7 +185,7 @@ export function applyLocalRows({ listElement, rows, nodeByKey, previousByKey }) 
         const previous = previousByKey.get(row.key);
         if (previous && previous.structure === row.structure) {
             // Only the number moved: patch the cell, keep the node.
-            if (applyTokenUpdate(node, row)) {
+            if (applyTokenUpdate(node, { value: row.tokenValue, inner: row.tokenInner })) {
                 stats.tokens += 1;
             } else {
                 const replacement = createNodeFromHtml(row.html);
