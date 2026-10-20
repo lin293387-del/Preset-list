@@ -12,6 +12,7 @@ import { promptManager as livePromptManager } from '/scripts/openai.js';
 import { getTokenizerModel } from '/scripts/tokenizers.js';
 
 import { createGestureGate } from './gesture.js';
+import { createInputGate } from './input.js';
 import { getContext, isMobileHost } from './host.js';
 import { createPresetWindowCoalescer } from './patches/preset-window.js';
 import { createPromptManagerPatch } from './patches/prompt-manager.js';
@@ -147,8 +148,25 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
      * promise "no repaint during a fling" checkable: nothing else in this module
      * calls the renderer directly.
      */
+    /**
+     * The chat field has its own hold, for a different reason than a gesture.
+     *
+     * While an IME is composing, the field changes value with every candidate and
+     * a DOM write elsewhere can move the caret or drop the composition. The panel
+     * therefore waits for the composition to end, and for a moment after ordinary
+     * typing, instead of writing into the middle of a sentence. What the hold
+     * delays is bookkeeping; nothing the user is typing depends on it.
+     */
+    const inputGate = createInputGate({
+        diagnostics,
+        onIdle: reason => {
+            panelGate.flush(reason);
+            scheduler.wake(reason);
+        },
+    });
+
     const panelGate = createGestureGate({
-        isHeld: () => isGestureHeld(),
+        isHeld: () => isGestureHeld() || inputGate.isHeld(),
         diagnostics,
     });
 
@@ -314,6 +332,52 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
             return;
         }
         scheduler.noteInteraction(type);
+    }
+
+    /**
+     * @param {EventTarget | null | undefined} target
+     * @returns {boolean} True when the event came from something the user types into.
+     */
+    function isEditableTarget(target) {
+        if (!(target instanceof Element)) {
+            return false;
+        }
+        const tag = target.tagName;
+        if (tag === 'TEXTAREA' || tag === 'INPUT') {
+            return true;
+        }
+        return /** @type {any} */ (target).isContentEditable === true
+            || target.closest('[contenteditable="true"]') !== null;
+    }
+
+    /**
+     * @param {any} event
+     */
+    function onCompositionStart(event) {
+        if (!settings.get().enabled || !isEditableTarget(event?.target)) {
+            return;
+        }
+        inputGate.beginComposition();
+    }
+
+    /**
+     * @param {any} event
+     */
+    function onCompositionEnd(event) {
+        if (!isEditableTarget(event?.target)) {
+            return;
+        }
+        inputGate.endComposition();
+    }
+
+    /**
+     * @param {any} event
+     */
+    function onInput(event) {
+        if (!settings.get().enabled || !isEditableTarget(event?.target)) {
+            return;
+        }
+        inputGate.noteInput();
     }
 
     function setSorting(next) {
@@ -488,6 +552,19 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
             disposers.push(() => document.removeEventListener(type, onUserInteraction, { capture: true }));
         }
 
+        // The chat field. `input` fires per keystroke; the gate folds a burst into
+        // one frame and holds the panel until the user stops typing.
+        /** @type {Array<[string, (event: any) => void]>} */
+        const fieldEvents = [
+            ['compositionstart', onCompositionStart],
+            ['compositionend', onCompositionEnd],
+            ['input', onInput],
+        ];
+        for (const [type, handler] of fieldEvents) {
+            document.addEventListener(type, handler, { passive: true, capture: true });
+            disposers.push(() => document.removeEventListener(type, handler, { capture: true }));
+        }
+
         if (jQuery?.fn?.on) {
             const onSortStart = () => setSorting(true);
             const onSortEnd = () => setSorting(false);
@@ -566,6 +643,7 @@ export function createRuntime({ context, settings, diagnostics, identity, hooks 
             scrollHoldTimer = null;
         }
         panelGate.clear();
+        inputGate.clear();
         if (settingsSyncTimer !== null) {
             clearTimeout(settingsSyncTimer);
             settingsSyncTimer = null;

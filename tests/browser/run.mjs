@@ -394,6 +394,66 @@ async function run() {
         console.log(`\nquiet fling (${quiet.requests} sync requests while flinging)  writes during gesture ${quiet.duringGesture.duringGesture} / ${quiet.duringGesture.total}  deferred=${quiet.gate.deferred}  rows ${quiet.rowsAfter}`);
         results.push({ name: 'quiet-fling', ...quiet });
 
+        // ---- an IME composition holds the panel exactly like a gesture
+        //
+        // While a composition runs, the field changes with every candidate; a panel
+        // write in that window can move the caret or drop the composition. The panel
+        // must stay silent for the whole composition and then run the work once.
+        const composing = await evaluate(`
+            window.__harness.watchMutations();
+            const held = window.__harness.beginComposition();
+            let requests = 0;
+            for (let index = 0; index < 10; index += 1) {
+                requests += 1;
+                window.__harness.recount(index + 1);
+                window.__harness.renameRow(index % 20, 'c' + index);
+                await new Promise(r => requestAnimationFrame(() => r()));
+            }
+            // Read the live log rather than stopping the observer: the flush below
+            // has to be seen by the same observer, and a stopped one records nothing.
+            const during = { duringGesture: window.__mutationLog.duringGesture, total: window.__mutationLog.total };
+            const stateDuring = window.__harness.inputState();
+
+            // Composition ends: the waiting work must run without another request.
+            window.__harness.endComposition();
+            await new Promise(r => setTimeout(r, 120));
+            const after = window.__mutationLog.total;
+            window.__harness.stopWatchingMutations();
+
+            return { held, requests, during, stateDuring, after, stateAfter: window.__harness.inputState() };
+        `);
+        console.log(`IME composition (${composing.requests} sync requests while composing)  writes during composition ${composing.during.duringGesture} / ${composing.during.total}  held=${composing.held}  deferred=${composing.stateDuring.deferred}`);
+        if (!composing.held) {
+            failures.push('a composition did not hold the panel');
+        }
+        if (composing.during.total > 0) {
+            failures.push(`the panel wrote ${composing.during.total} time(s) during an IME composition`);
+        }
+        if (composing.stateDuring.deferred !== true) {
+            failures.push('a sync requested during a composition was not deferred');
+        }
+        if (composing.after === 0) {
+            failures.push('the work deferred by a composition never ran after it ended');
+        }
+        results.push({ name: 'ime-composition', ...composing });
+
+        // ---- typing is held for a moment, not forever
+        const typing = await evaluate(`
+            const held = window.__harness.typeKeys(40);
+            const stateTyping = window.__harness.inputState();
+            await window.__harness.waitForTypingHold();
+            const stateIdle = window.__harness.inputState();
+            return { held, stateTyping, stateIdle, rows: window.__harness.rowCount() };
+        `);
+        console.log(`typing burst (40 keys)  held ${typing.held} -> ${typing.stateIdle.held}`);
+        if (!typing.held) {
+            failures.push('a burst of keystrokes did not hold the panel');
+        }
+        if (typing.stateIdle.held) {
+            failures.push('the typing hold never expired, so the panel would stay frozen after typing');
+        }
+        results.push({ name: 'typing-hold', ...typing });
+
         // Positive control: the same observer must see writes when the gate is not
         // in the way. Without this, "0 writes" could just mean "observer is broken".
         const controlWrites = await evaluate(`

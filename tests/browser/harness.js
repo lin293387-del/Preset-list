@@ -10,6 +10,7 @@
 import { createPanelState, syncPanel } from '../../src/render/panel.js';
 import { createDiagnostics } from '../../src/diagnostics.js';
 import { createGestureGate } from '../../src/gesture.js';
+import { createInputGate } from '../../src/input.js';
 
 const PREFIX = 'completion_';
 const ROW_COUNT = Number(new URLSearchParams(location.search).get('rows') ?? 200);
@@ -193,7 +194,15 @@ scroller.addEventListener('scroll', () => markScrolling(), { passive: true });
  */
 let gestureHeld = false;
 let scrollHoldTimer = null;
-const gate = createGestureGate({ isHeld: () => gestureHeld, diagnostics });
+// Mirrors the runtime wiring: the panel is held during a gesture *and* while the
+// user is composing or typing, for the same reason and with the same gate.
+const inputGate = createInputGate({
+    diagnostics,
+    onIdle: reason => {
+        gate.flush(reason);
+    },
+});
+const gate = createGestureGate({ isHeld: () => gestureHeld || inputGate.isHeld(), diagnostics });
 const SCROLL_HOLD_MS = 160;
 
 function markScrolling() {
@@ -246,6 +255,25 @@ window.__harness = {
         return performance.now() - started + sink * 0;
     },
     gateState: () => ({ held: gestureHeld, deferred: gate.isDeferred(), reason: gate.deferredReason() }),
+
+    /**
+     * The chat field, as the runtime sees it: composition and keystrokes.
+     *
+     * These call the same gate the runtime calls, with the same wiring, so the
+     * assertions that follow measure the gate rather than a stand-in for it.
+     */
+    beginComposition: () => { inputGate.beginComposition(); return inputGate.isHeld(); },
+    endComposition: () => { inputGate.endComposition(); return inputGate.isHeld(); },
+    inputState: () => ({ composing: inputGate.isComposing(), held: inputGate.isHeld(), deferred: gate.isDeferred() }),
+    /** A burst of keystrokes; the gate must fold them into one frame. */
+    typeKeys(count = 10) {
+        for (let index = 0; index < count; index += 1) {
+            inputGate.noteInput();
+        }
+        return inputGate.isHeld();
+    },
+    /** Waits for the hold to expire the way a user stopping typing would. */
+    waitForTypingHold: () => new Promise(resolve => setTimeout(resolve, 200)),
     /** Count DOM mutations the panel makes, so "no writes during a fling" is provable. */
     watchMutations() {
         const list = document.getElementById('completion_prompt_manager_list');
