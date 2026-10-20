@@ -98,16 +98,22 @@ function findScroller(element) {
  * Checking the offset afterwards is not free: reading `scrollTop` after the sync
  * wrote to the DOM forces a synchronous layout of every row, which a CPU profile
  * charges to that read and which showed up as the single most expensive line in
- * the render path. A sync that only rewrote token cells cannot shrink the list, so
- * it asks for no check at all and keeps the layout out of the blocking window.
+ * the render path. Two things keep it out of the blocking window:
+ *
+ * - a sync that only rewrote token cells cannot shrink the list, so it asks for no
+ *   check at all;
+ * - a sync that did move rows hands the check to the next animation frame. The
+ *   browser has to lay the list out anyway before it paints, and a frame callback
+ *   runs before that layout, so the correction lands before the clamped position
+ *   is ever shown — while the interaction returns without waiting for it.
  *
  * @param {HTMLElement | null | undefined} element
- * @returns {{ end: (rowsTouched?: boolean) => void }}
+ * @returns {{ end: (rowsTouched?: boolean) => void, endNow: () => void }}
  */
 function preserveScroll(element) {
     const scroller = findScroller(element);
     if (!scroller) {
-        return { end() {} };
+        return { end() {}, endNow() {} };
     }
     const top = scroller.scrollTop;
     return {
@@ -116,6 +122,19 @@ function preserveScroll(element) {
             if (!rowsTouched) {
                 return;
             }
+            const restore = () => {
+                if (scroller.scrollTop !== top) {
+                    scroller.scrollTop = top;
+                }
+            };
+            if (typeof requestAnimationFrame !== 'function') {
+                restore();
+                return;
+            }
+            requestAnimationFrame(restore);
+        },
+        /** The stock fallback runs when the extension is stepping aside: settle now. */
+        endNow() {
             if (scroller.scrollTop !== top) {
                 scroller.scrollTop = top;
             }
@@ -1331,11 +1350,14 @@ async function syncPanelNow(context) {
             state.placeholderApplied = false;
             applyStalePresentation(context);
             captureRowSignatures(context, renderedKeys);
-            // Only a sync that changed a row can have changed the select's
-            // contents, so the O(n log n) comparison stays off the fast paths.
-            if (state.selectSignature !== selectSignature(instance)) {
-                await refreshSelectOptions(context);
-            }
+        }
+
+        // The select is checked on every sync, not only on the ones that rebuilt a
+        // row: the comparison is a few hundred string joins (0.1 ms), and a stale
+        // dropdown that waits for the next structural change is worse than paying
+        // for it. A sync that did not need it repairs a select an earlier one missed.
+        if (state.selectSignature !== selectSignature(instance)) {
+            await refreshSelectOptions(context);
         }
         updateTotal(context);
         announcePath(context);
@@ -1403,6 +1425,8 @@ export async function fullRebuild(context) {
         await originals.renderPromptManagerListItems.call(instance);
         instance.makeDraggable();
     } finally {
-        scroll.end();
+        // This is the path that runs when the extension steps aside, so it settles
+        // the offset immediately instead of leaving it to the next frame.
+        scroll.endNow();
     }
 }

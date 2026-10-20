@@ -449,11 +449,14 @@ async function run() {
         const selectSync = await evaluate(`
             const seen = [];
             for (let i = 0; i < 4; i += 1) {
+                // \`requestSync\` goes through the gesture gate, which may defer the
+                // sync instead of waiting for it, so the comparison is taken after a
+                // sync that is known to have run.
                 await window.__harness.duplicateRow(15 + i);
-                await new Promise(r => requestAnimationFrame(() => r()));
+                await window.__harness.sync();
                 seen.push({ step: 'duplicate', live: window.__harness.selectOptions(), expected: window.__harness.selectableOptions() });
                 await window.__harness.deleteRow(15 + i);
-                await new Promise(r => requestAnimationFrame(() => r()));
+                await window.__harness.sync();
                 seen.push({ step: 'delete', live: window.__harness.selectOptions(), expected: window.__harness.selectableOptions() });
             }
             const drifted = seen.filter(entry => entry.live.join('|') !== entry.expected.join('|'));
