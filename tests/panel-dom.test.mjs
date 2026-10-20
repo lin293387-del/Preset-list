@@ -342,27 +342,51 @@ describe('panel DOM integration', { skip: Window ? false : 'happy-dom is not ins
     });
 
     /**
-     * Emulates how a browser clamps a scroll offset when the scrolled content
-     * shrinks: the prompt list is treated as the only content of the scroller, so
-     * an empty list means the offset falls back to the top.
+     * Emulates how a browser treats a scroll offset when the scrolled content
+     * shrinks: the prompt list is the only content of the scroller, so emptying
+     * the container collapses it and the offset is rewritten to the top. The
+     * clamp is sticky, exactly like a real layout pass.
      *
-     * @returns {{ reads: number[], scroller: any }}
+     * @returns {{ state: { value: number }, container: HTMLElement }}
      */
     function installClampingScroller() {
         const scroller = document.querySelector('.scrollableInner');
-        const state = { value: 240, reads: [] };
+        const container = document.getElementById(`${PREFIX}prompt_manager`);
+        const state = { value: 240 };
         const hasRows = () => Boolean(document.querySelector(`#${PREFIX}prompt_manager_list li[data-pm-identifier]`));
+        const clamp = () => {
+            if (!hasRows()) {
+                state.value = 0;
+            }
+        };
+
         Object.defineProperty(scroller, 'scrollTop', {
             configurable: true,
-            get() {
-                state.reads.push(state.value);
-                return hasRows() ? state.value : 0;
-            },
+            get: () => (hasRows() ? state.value : 0),
             set(value) {
                 state.value = hasRows() ? Number(value) || 0 : 0;
             },
         });
-        return { state, scroller };
+
+        // Emptying the container is what collapses the scroller in a browser.
+        const htmlDescriptor = Object.getOwnPropertyDescriptor(window.Element.prototype, 'innerHTML');
+        assert.ok(htmlDescriptor?.set, 'happy-dom must expose the innerHTML setter');
+        Object.defineProperty(container, 'innerHTML', {
+            configurable: true,
+            get: () => htmlDescriptor.get.call(container),
+            set(value) {
+                htmlDescriptor.set.call(container, value);
+                clamp();
+            },
+        });
+
+        const replaceChildren = container.replaceChildren.bind(container);
+        container.replaceChildren = (...nodes) => {
+            replaceChildren(...nodes);
+            clamp();
+        };
+
+        return { state, container };
     }
 
     test('a structural rebuild never empties the list while it renders', async () => {
